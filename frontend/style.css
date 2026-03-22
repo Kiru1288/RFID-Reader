@@ -1,0 +1,95 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Inter", Arial, sans-serif;
+}
+
+body {
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: linear-gradient(135deg, #0f0f0f, #1a1a1a);
+  color: white;
+}
+
+#scanInput {
+  position: absolute;
+  opacity: 0;
+}
+
+#container {
+  width: 90%;
+  max-width: 600px;
+  text-align: center;
+}
+
+h1 {
+  font-size: 2.5rem;
+  margin-bottom: 25px;
+  color: #CDB937;
+}
+
+/* RESULT CARD */
+#result {
+  background: #1f2937;
+  padding: 30px;
+  border-radius: 16px;
+  transition: 0.3s;
+}
+
+#name {
+  font-size: 26px;
+  margin-bottom: 10px;
+}
+
+#phone {
+  font-size: 16px;
+  color: #9ca3af;
+}
+
+#status {
+  margin-top: 10px;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+/* FORM */
+#registerForm {
+  display: none;
+  margin-top: 20px;
+}
+
+#registerForm input {
+  width: 100%;
+  padding: 14px;
+  margin: 8px 0;
+  border-radius: 10px;
+  border: none;
+  background: #111827;
+  color: white;
+  font-size: 16px;
+}
+
+/* 🔥 FIXED BUTTON */
+#saveBtn {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  border-radius: 12px;
+  border: none;
+  background: #22c55e;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+#saveBtn:hover {
+  background: #16a34a;
+}
+
+#saveBtn:active {
+  transform: scale(0.97);
+}

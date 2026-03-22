@@ -1,5 +1,16 @@
-venv/
+# Python
 __pycache__/
-*.db
-credentials.json
+*.pyc
+
+# Environment
 .env
+
+# Secrets
+credentials.json
+
+# Database
+students.db
+
+# OS
+.DS_Store
+Thumbs.db

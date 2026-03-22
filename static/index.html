@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>RFID Attendance</title>
+
+  <!-- Mobile optimization -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+  <!-- Correct CSS filename -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <!-- HIDDEN INPUT FOR RFID (VERY IMPORTANT) -->
+  <input 
+    id="scanInput" 
+    type="text" 
+    autocomplete="off"
+    autofocus
+    style="position:absolute; opacity:0;"
+  />
+
+  <div id="container">
+
+    <h1>RFID Check-In</h1>
+
+    <div id="result">
+      <h2 id="name">Scan RFID Bracelet</h2>
+      <p id="phone"></p>
+      <p id="status"></p>
+    </div>
+
+    <!-- REGISTER FORM (hidden by default) -->
+    <div id="registerForm" style="display:none;">
+      <h3>Register New Student</h3>
+
+      <input id="firstName" placeholder="First Name" />
+      <input id="lastName" placeholder="Last Name" />
+      <input id="phoneInput" placeholder="Phone Number" type="tel" />
+
+      <button id="saveBtn" type="button">Save Student</button>
+    </div>
+
+  </div>
+
+  <!-- Optional helper for tablets -->
+  <div id="tapOverlay">Tap screen if scanner stops working</div>
+
+  <!-- JS -->
+  <script src="app.js"></script>
+
+</body>
+</html>

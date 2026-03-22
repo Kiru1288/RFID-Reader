@@ -1,17 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
+from fastapi.staticfiles import StaticFiles
 from datetime import datetime
 from pydantic import BaseModel
-
-# ✅ NEW IMPORTS (Google Sheets)
+import psycopg2
+import os
+import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 app = FastAPI()
 
 # -------------------------------
-# CORS (allow frontend to connect)
+# CORS
 # -------------------------------
 app.add_middleware(
     CORSMiddleware,
@@ -21,41 +22,106 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_NAME = "students.db"
+# -------------------------------
+# DATABASE (PostgreSQL)
+# -------------------------------
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def get_db():
+    return psycopg2.connect(DATABASE_URL)
+
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS students (
+        id SERIAL PRIMARY KEY,
+        rfid_uid TEXT UNIQUE,
+        first_name TEXT,
+        last_name TEXT,
+        phone TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS attendance (
+        id SERIAL PRIMARY KEY,
+        rfid_uid TEXT,
+        timestamp TEXT
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+init_db()
 
 # -------------------------------
-# GOOGLE SHEETS SETUP
+# GOOGLE SHEETS (PRODUCTION READY)
 # -------------------------------
-scope = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
+sheet = None
 
-creds = ServiceAccountCredentials.from_json_keyfile_name(
-    "credentials.json", scope
-)
+try:
+    creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
-client = gspread.authorize(creds)
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
 
-# ⚠️ MAKE SURE THIS NAME MATCHES YOUR SHEET
-sheet = client.open("Basketball Check-In").sheet1
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope
+        )
+
+        client = gspread.authorize(creds)
+        sheet = client.open("Basketball Check-In").sheet1
+
+        print("✅ Google Sheets connected (Render)")
+
+    elif os.path.exists("credentials.json"):
+        creds = ServiceAccountCredentials.from_json_keyfile_name(
+            "credentials.json", scope
+        )
+
+        client = gspread.authorize(creds)
+        sheet = client.open("Basketball Check-In").sheet1
+
+        print("✅ Google Sheets connected (Local)")
+
+    else:
+        print("⚠️ No Google credentials found")
+
+except Exception as e:
+    print("❌ Google Sheets error:", e)
+    sheet = None
 
 
 def log_to_sheet(first_name, last_name, phone, rfid):
-    now = datetime.now()
+    if not sheet:
+        return
 
-    sheet.append_row([
-        now.strftime("%Y-%m-%d"),
-        now.strftime("%H:%M:%S"),
-        f"{first_name} {last_name}",
-        phone,
-        rfid,
-        "Present"
-    ])
+    try:
+        now = datetime.now()
 
+        sheet.append_row([
+            now.strftime("%Y-%m-%d"),
+            now.strftime("%H:%M:%S"),
+            f"{first_name} {last_name}",
+            phone,
+            rfid,
+            "Present"
+        ])
+    except Exception as e:
+        print("Google Sheets Error:", e)
 
 # -------------------------------
-# DUPLICATE SCAN PROTECTION
+# COOLDOWN
 # -------------------------------
 last_scan = {}
 
@@ -70,45 +136,6 @@ def should_log(rfid):
     last_scan[rfid] = now
     return True
 
-
-# -------------------------------
-# DATABASE SETUP
-# -------------------------------
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS students (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rfid_uid TEXT UNIQUE,
-        first_name TEXT,
-        last_name TEXT,
-        phone TEXT
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS attendance (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rfid_uid TEXT,
-        timestamp TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-init_db()
-
-
-# -------------------------------
-# DB HELPER
-# -------------------------------
-def get_db():
-    return sqlite3.connect(DB_NAME)
-
-
 # -------------------------------
 # MODELS
 # -------------------------------
@@ -122,17 +149,8 @@ class StudentCreate(BaseModel):
 class ScanRequest(BaseModel):
     rfid_uid: str
 
-
 # -------------------------------
-# ROOT TEST
-# -------------------------------
-@app.get("/")
-def root():
-    return {"message": "RFID Attendance API Running"}
-
-
-# -------------------------------
-# REGISTER STUDENT
+# REGISTER
 # -------------------------------
 @app.post("/register")
 def register_student(data: StudentCreate):
@@ -142,39 +160,31 @@ def register_student(data: StudentCreate):
     try:
         cur.execute("""
             INSERT INTO students (rfid_uid, first_name, last_name, phone)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
         """, (data.rfid_uid, data.first_name, data.last_name, data.phone))
 
         conn.commit()
 
-        return {
-            "success": True,
-            "message": "Student registered successfully"
-        }
+        return {"success": True, "message": "Student registered"}
 
-    except sqlite3.IntegrityError:
-        return {
-            "success": False,
-            "error": "RFID already registered"
-        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
     finally:
         conn.close()
 
-
 # -------------------------------
-# SCAN RFID
+# SCAN
 # -------------------------------
 @app.post("/scan")
 def scan_rfid(data: ScanRequest):
     conn = get_db()
     cur = conn.cursor()
 
-    # Check if student exists
     cur.execute("""
         SELECT first_name, last_name, phone
         FROM students
-        WHERE rfid_uid = ?
+        WHERE rfid_uid = %s
     """, (data.rfid_uid,))
 
     row = cur.fetchone()
@@ -182,21 +192,16 @@ def scan_rfid(data: ScanRequest):
     if row:
         first_name, last_name, phone = row
 
-        # ✅ Log to DATABASE
         cur.execute("""
             INSERT INTO attendance (rfid_uid, timestamp)
-            VALUES (?, ?)
+            VALUES (%s, %s)
         """, (data.rfid_uid, datetime.now().isoformat()))
 
         conn.commit()
         conn.close()
 
-        # ✅ Log to GOOGLE SHEET (with duplicate protection)
         if should_log(data.rfid_uid):
-            try:
-                log_to_sheet(first_name, last_name, phone, data.rfid_uid)
-            except Exception as e:
-                print("Google Sheets Error:", e)
+            log_to_sheet(first_name, last_name, phone, data.rfid_uid)
 
         return {
             "found": True,
@@ -208,16 +213,14 @@ def scan_rfid(data: ScanRequest):
 
     else:
         conn.close()
-
         return {
             "found": False,
             "rfid_uid": data.rfid_uid,
             "message": "New bracelet detected"
         }
 
-
 # -------------------------------
-# GET ALL STUDENTS
+# GET STUDENTS
 # -------------------------------
 @app.get("/students")
 def get_students():
@@ -226,7 +229,6 @@ def get_students():
 
     cur.execute("SELECT rfid_uid, first_name, last_name, phone FROM students")
     rows = cur.fetchall()
-
     conn.close()
 
     return [
@@ -239,9 +241,8 @@ def get_students():
         for r in rows
     ]
 
-
 # -------------------------------
-# GET ATTENDANCE LOG
+# GET ATTENDANCE
 # -------------------------------
 @app.get("/attendance")
 def get_attendance():
@@ -264,3 +265,8 @@ def get_attendance():
         }
         for r in rows
     ]
+
+# -------------------------------
+# SERVE FRONTEND
+# -------------------------------
+app.mount("/", StaticFiles(directory="static", html=True), name="static")

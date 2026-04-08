@@ -60,7 +60,7 @@ def init_db():
 init_db()
 
 # -------------------------------
-# GOOGLE SHEETS (PRODUCTION READY)
+# GOOGLE SHEETS
 # -------------------------------
 sheet = None
 
@@ -80,7 +80,7 @@ try:
         )
 
         client = gspread.authorize(creds)
-        sheet = client.open("Basketball Check-In").sheet1
+        sheet = client.open("EthioCare Basketball Attendance").sheet1
 
         print("✅ Google Sheets connected (Render)")
 
@@ -90,7 +90,7 @@ try:
         )
 
         client = gspread.authorize(creds)
-        sheet = client.open("Basketball Check-In").sheet1
+        sheet = client.open("EthioCare Basketball Attendance").sheet1
 
         print("✅ Google Sheets connected (Local)")
 
@@ -102,23 +102,81 @@ except Exception as e:
     sheet = None
 
 
+# -------------------------------
+# 🔥 NEW GRID LOGIC
+# -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     if not sheet:
         return
 
     try:
+        # -----------------------------
+        # FORMAT
+        # -----------------------------
+        full_name = f"{first_name} {last_name}".strip().upper()
         now = datetime.now()
+        today_str = now.strftime("%-d-%b")  # e.g. 3-Apr
 
-        sheet.append_row([
-            now.strftime("%Y-%m-%d"),
-            now.strftime("%H:%M:%S"),
-            f"{first_name} {last_name}",
-            phone,
-            rfid,
-            "Present"
-        ])
+        # -----------------------------
+        # GET DATA
+        # -----------------------------
+        data = sheet.get_all_values()
+
+        if not data or len(data) < 2:
+            print("Sheet empty")
+            return
+
+        header = data[0]
+        rows = data[1:]
+
+        # -----------------------------
+        # FIND PLAYER
+        # -----------------------------
+        player_row = None
+
+        for i, row in enumerate(rows, start=2):
+            name = row[0].strip().upper()
+            if name == full_name:
+                player_row = i
+                break
+
+        if not player_row:
+            print(f"❌ Player not found: {full_name}")
+            return
+
+        # -----------------------------
+        # FIND DATE COLUMN
+        # -----------------------------
+        col_index = None
+
+        for i, col in enumerate(header):
+            if col.strip() == today_str:
+                col_index = i + 1
+                break
+
+        if not col_index:
+            print(f"❌ Date column not found: {today_str}")
+            return
+
+        # -----------------------------
+        # CHECK EXISTING VALUE
+        # -----------------------------
+        current_value = sheet.cell(player_row, col_index).value
+
+        if current_value == "P":
+            print("⚠️ Already marked present")
+            return
+
+        # -----------------------------
+        # UPDATE CELL
+        # -----------------------------
+        sheet.update_cell(player_row, col_index, "P")
+
+        print(f"✅ {full_name} marked present on {today_str}")
+
     except Exception as e:
-        print("Google Sheets Error:", e)
+        print("❌ Sheet update error:", e)
+
 
 # -------------------------------
 # COOLDOWN
@@ -136,6 +194,7 @@ def should_log(rfid):
     last_scan[rfid] = now
     return True
 
+
 # -------------------------------
 # MODELS
 # -------------------------------
@@ -148,6 +207,7 @@ class StudentCreate(BaseModel):
 
 class ScanRequest(BaseModel):
     rfid_uid: str
+
 
 # -------------------------------
 # REGISTER
@@ -165,13 +225,14 @@ def register_student(data: StudentCreate):
 
         conn.commit()
 
-        return {"success": True, "message": "Student registered"}
+        return {"success": True}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
 
     finally:
         conn.close()
+
 
 # -------------------------------
 # SCAN
@@ -207,64 +268,16 @@ def scan_rfid(data: ScanRequest):
             "found": True,
             "first_name": first_name,
             "last_name": last_name,
-            "phone": phone,
-            "message": "Attendance logged"
+            "phone": phone
         }
 
     else:
         conn.close()
         return {
             "found": False,
-            "rfid_uid": data.rfid_uid,
-            "message": "New bracelet detected"
+            "rfid_uid": data.rfid_uid
         }
 
-# -------------------------------
-# GET STUDENTS
-# -------------------------------
-@app.get("/students")
-def get_students():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT rfid_uid, first_name, last_name, phone FROM students")
-    rows = cur.fetchall()
-    conn.close()
-
-    return [
-        {
-            "rfid_uid": r[0],
-            "first_name": r[1],
-            "last_name": r[2],
-            "phone": r[3]
-        }
-        for r in rows
-    ]
-
-# -------------------------------
-# GET ATTENDANCE
-# -------------------------------
-@app.get("/attendance")
-def get_attendance():
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT rfid_uid, timestamp
-        FROM attendance
-        ORDER BY id DESC
-    """)
-
-    rows = cur.fetchall()
-    conn.close()
-
-    return [
-        {
-            "rfid_uid": r[0],
-            "timestamp": r[1]
-        }
-        for r in rows
-    ]
 
 # -------------------------------
 # SERVE FRONTEND

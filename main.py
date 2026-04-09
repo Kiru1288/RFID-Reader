@@ -106,7 +106,9 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         print(f"📤 LOGGING: {full_name}")
 
-        spreadsheet = client.open("EthioCare Basketball Attendance (1) (1) ")
+        spreadsheet = client.open_by_url(
+                "https://docs.google.com/spreadsheets/d/1cncmYwgWHD3MQPSEe_HHS3C3WOYznle6/edit"
+        )
         SHEETS = ["U11 Attendance", "U16 Attendance"]
 
         target_sheet = None

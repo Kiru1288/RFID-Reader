@@ -91,7 +91,7 @@ except Exception as e:
 
 
 # -------------------------------
-# 🔥 FINAL FIXED LOGGING
+# 🔥 FINAL BULLETPROOF LOGGING
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     print("🚀 log_to_sheet CALLED")
@@ -106,21 +106,23 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         print(f"📤 LOGGING: {full_name}")
 
-        # ✅ ALWAYS USE URL (NO NAME BUGS EVER AGAIN)
+        # ✅ ALWAYS USE URL
         spreadsheet = client.open_by_url(
             "https://docs.google.com/spreadsheets/d/1tEtYSJnIWKn3uScBhn1e_chiEPLt3jCHF1O9XVvjhnM/edit"
         )
 
-        SHEETS = ["U11 Attendance", "U16 Attendance"]
+        worksheets = spreadsheet.worksheets()
 
         target_sheet = None
         player_row = None
 
         # -------------------------------
-        # FIND PLAYER IN BOTH TABS
+        # FIND PLAYER IN ANY ATTENDANCE TAB
         # -------------------------------
-        for sheet_name in SHEETS:
-            sheet = spreadsheet.worksheet(sheet_name)
+        for sheet in worksheets:
+            if "attendance" not in sheet.title.lower():
+                continue
+
             data = sheet.get_all_values()
 
             for i, row in enumerate(data[1:], start=2):
@@ -130,18 +132,23 @@ def log_to_sheet(first_name, last_name, phone, rfid):
                     if full_name == name or full_name.split()[0] in name:
                         target_sheet = sheet
                         player_row = i
-                        print(f"✅ Found in {sheet_name} at row {i}")
+                        print(f"✅ Found in {sheet.title} at row {i}")
                         break
 
             if target_sheet:
                 break
 
         # -------------------------------
-        # IF PLAYER NOT FOUND → ADD
+        # IF NOT FOUND → ADD TO FIRST ATTENDANCE TAB
         # -------------------------------
         if not target_sheet:
-            print("⚠️ Player NOT FOUND → adding to U11")
-            target_sheet = spreadsheet.worksheet("U11 Attendance")
+            print("⚠️ Player NOT FOUND → adding to first attendance sheet")
+
+            for sheet in worksheets:
+                if "attendance" in sheet.title.lower():
+                    target_sheet = sheet
+                    break
+
             data = target_sheet.get_all_values()
             header = data[0]
 
@@ -161,7 +168,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         for col in header:
             try:
-                col_date = datetime.strptime(col, "%d-%b").replace(year=today.year)
+                col_date = datetime.strptime(col.strip(), "%d-%b").replace(year=today.year)
                 diff = abs((today - col_date).days)
 
                 if diff < min_diff:
@@ -266,7 +273,6 @@ def scan_rfid(data: ScanRequest):
         conn.commit()
         conn.close()
 
-        # 🔥 LOG TO SHEET
         log_to_sheet(first_name, last_name, phone, data.rfid_uid)
 
         return {

@@ -117,7 +117,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         for ws in worksheets:
             print(" -", ws.title)
 
-        target_sheet = worksheets[0]  # 👈 FORCE FIRST SHEET (IMPORTANT FIX)
+        target_sheet = spreadsheet.worksheet("U11 Attendance")
 
         print(f"📍 USING SHEET: {target_sheet.title}")
 

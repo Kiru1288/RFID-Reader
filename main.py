@@ -62,7 +62,6 @@ init_db()
 # -------------------------------
 # GOOGLE SHEETS
 # -------------------------------
-sheet = None
 client = None
 
 try:
@@ -75,33 +74,28 @@ try:
 
     if creds_json:
         creds_dict = json.loads(creds_json)
-
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(
-            creds_dict, scope
-        )
-
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         print("✅ Google Sheets connected (Render)")
 
     elif os.path.exists("credentials.json"):
-        creds = ServiceAccountCredentials.from_json_keyfile_name(
-            "credentials.json", scope
-        )
-
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
         client = gspread.authorize(creds)
         print("✅ Google Sheets connected (Local)")
 
     else:
-        print("⚠️ No Google credentials found")
+        print("❌ No Google credentials found")
 
 except Exception as e:
     print("❌ Google Sheets error:", e)
 
 
 # -------------------------------
-# 🔥 MULTI-TAB SMART LOGIC
+# 🔥 MULTI-TAB LOGGING (FIXED)
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
+    print("🚀 log_to_sheet CALLED")
+
     if not client:
         print("❌ No Google client")
         return
@@ -110,45 +104,36 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         full_name = f"{first_name} {last_name}".strip().upper()
         today = datetime.now()
 
-        print("\n📤 LOGGING:", full_name)
+        print(f"📤 LOGGING: {full_name}")
 
         spreadsheet = client.open("EthioCare Basketball Attendance")
-
         SHEETS = ["U11 Attendance", "U16 Attendance"]
 
         target_sheet = None
         player_row = None
 
-        # -----------------------------
-        # FIND WHICH SHEET PLAYER IS IN
-        # -----------------------------
+        # FIND PLAYER
         for sheet_name in SHEETS:
-            try:
-                sheet = spreadsheet.worksheet(sheet_name)
-                data = sheet.get_all_values()
+            sheet = spreadsheet.worksheet(sheet_name)
+            data = sheet.get_all_values()
 
-                rows = data[1:]
+            for i, row in enumerate(data[1:], start=2):
+                if len(row) > 0:
+                    name = row[0].strip().upper()
 
-                for i, row in enumerate(rows, start=2):
-                    if len(row) > 0:
-                        name = row[0].strip().upper()
-                        if full_name in name:
-                            target_sheet = sheet
-                            player_row = i
-                            print(f"✅ Found in {sheet_name}")
-                            break
+                    # 🔥 STRONG MATCH
+                    if full_name == name or full_name.split()[0] in name:
+                        target_sheet = sheet
+                        player_row = i
+                        print(f"✅ Found in {sheet_name} at row {i}")
+                        break
 
-                if target_sheet:
-                    break
+            if target_sheet:
+                break
 
-            except Exception as e:
-                print(f"❌ Error reading {sheet_name}:", e)
-
-        # -----------------------------
-        # DEFAULT TO U11 IF NOT FOUND
-        # -----------------------------
+        # IF NOT FOUND → ADD
         if not target_sheet:
-            print("⚠️ Player not found — defaulting to U11")
+            print("⚠️ Player NOT FOUND → adding to U11")
             target_sheet = spreadsheet.worksheet("U11 Attendance")
             data = target_sheet.get_all_values()
             header = data[0]
@@ -158,23 +143,17 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
             player_row = len(data) + 1
 
-        # -----------------------------
         # GET HEADER
-        # -----------------------------
         data = target_sheet.get_all_values()
         header = data[0]
 
-        # -----------------------------
-        # FIND CLOSEST DATE COLUMN
-        # -----------------------------
+        # FIND TODAY COLUMN
         closest_col = None
         min_diff = 999
 
         for col in header:
             try:
-                col_date = datetime.strptime(col, "%d-%b")
-                col_date = col_date.replace(year=today.year)
-
+                col_date = datetime.strptime(col, "%d-%b").replace(year=today.year)
                 diff = abs((today - col_date).days)
 
                 if diff < min_diff:
@@ -188,45 +167,24 @@ def log_to_sheet(first_name, last_name, phone, rfid):
             print("❌ No date column found")
             return
 
-        print("📅 Using column:", closest_col)
+        print(f"📅 Using column: {closest_col}")
 
         col_index = header.index(closest_col) + 1
 
-        # -----------------------------
-        # CHECK EXISTING VALUE
-        # -----------------------------
+        # CHECK EXISTING
         current_value = target_sheet.cell(player_row, col_index).value
 
         if current_value == "P":
-            print("⚠️ Already marked")
+            print("⚠️ Already marked present")
             return
 
-        # -----------------------------
         # UPDATE
-        # -----------------------------
         target_sheet.update_cell(player_row, col_index, "P")
 
-        print("✅ MARKED PRESENT")
+        print("✅ MARKED PRESENT IN SHEET")
 
     except Exception as e:
         print("❌ FINAL ERROR:", e)
-
-
-# -------------------------------
-# COOLDOWN
-# -------------------------------
-last_scan = {}
-
-def should_log(rfid):
-    now = datetime.now()
-
-    if rfid in last_scan:
-        diff = (now - last_scan[rfid]).seconds
-        if diff < 5:
-            return False
-
-    last_scan[rfid] = now
-    return True
 
 
 # -------------------------------
@@ -272,6 +230,8 @@ def register_student(data: StudentCreate):
 # -------------------------------
 @app.post("/scan")
 def scan_rfid(data: ScanRequest):
+    print("📡 SCAN RECEIVED:", data.rfid_uid)
+
     conn = get_db()
     cur = conn.cursor()
 
@@ -294,8 +254,8 @@ def scan_rfid(data: ScanRequest):
         conn.commit()
         conn.close()
 
-        if should_log(data.rfid_uid):
-            log_to_sheet(first_name, last_name, phone, data.rfid_uid)
+        # 🔥 ALWAYS LOG (NO COOLDOWN)
+        log_to_sheet(first_name, last_name, phone, data.rfid_uid)
 
         return {
             "found": True,

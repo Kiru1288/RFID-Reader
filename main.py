@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 # -------------------------------
-# DATABASE (PostgreSQL)
+# DATABASE
 # -------------------------------
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -60,7 +60,7 @@ def init_db():
 init_db()
 
 # -------------------------------
-# GOOGLE SHEETS (FIXED)
+# GOOGLE SHEETS
 # -------------------------------
 sheet = None
 
@@ -80,9 +80,9 @@ try:
         )
 
         client = gspread.authorize(creds)
-        sheet = client.open("Basketball Check-In").sheet1
+        sheet = client.open("EthioCare Basketball Attendance").sheet1
 
-        print("✅ Google Sheets connected (Render)")
+        print("✅ Google Sheets connected")
 
     elif os.path.exists("credentials.json"):
         creds = ServiceAccountCredentials.from_json_keyfile_name(
@@ -90,12 +90,12 @@ try:
         )
 
         client = gspread.authorize(creds)
-        sheet = client.open("Basketball Check-In").sheet1
+        sheet = client.open("EthioCare Basketball Attendance").sheet1
 
-        print("✅ Google Sheets connected (Local)")
+        print("✅ Google Sheets connected (local)")
 
     else:
-        print("⚠️ No Google credentials found")
+        print("⚠️ No credentials")
 
 except Exception as e:
     print("❌ Google Sheets error:", e)
@@ -103,62 +103,73 @@ except Exception as e:
 
 
 # -------------------------------
-# 🔥 FIXED LOGIC (ROBUST)
+# 🔥 SMART LOGIC (FIXED FOR YOUR SHEET)
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     if not sheet:
-        print("❌ Sheet not connected")
+        print("❌ No sheet connection")
         return
 
     try:
         full_name = f"{first_name} {last_name}".strip().upper()
-        now = datetime.now()
-        today_str = now.strftime("%d-%b").lstrip("0")  # FIXED FORMAT
+        today = datetime.now()
 
-        print("\n📤 GOOGLE SHEETS LOG START")
-        print("Name:", full_name)
-        print("Date:", today_str)
+        print("\n📤 LOGGING:", full_name)
 
         data = sheet.get_all_values()
-
-        if not data:
-            print("⚠️ Sheet empty — initializing")
-
-            sheet.append_row(["Name", "Phone", today_str])
-            sheet.append_row([full_name, phone, "P"])
-            return
 
         header = data[0]
         rows = data[1:]
 
-        print("Header:", header)
+        # -----------------------------
+        # 🔥 FIND CLOSEST DATE COLUMN
+        # -----------------------------
+        closest_col = None
+        min_diff = 999
+
+        for col in header:
+            try:
+                col_date = datetime.strptime(col, "%d-%b")
+                col_date = col_date.replace(year=today.year)
+
+                diff = abs((today - col_date).days)
+
+                if diff < min_diff:
+                    min_diff = diff
+                    closest_col = col
+
+            except:
+                continue
+
+        if not closest_col:
+            print("❌ No valid date columns found")
+            return
+
+        print("📅 Using column:", closest_col)
+
+        col_index = header.index(closest_col) + 1
 
         # -----------------------------
-        # FIND OR CREATE DATE COLUMN
-        # -----------------------------
-        if today_str not in header:
-            print("➕ Adding new date column:", today_str)
-            sheet.update_cell(1, len(header) + 1, today_str)
-            header.append(today_str)
-
-        col_index = header.index(today_str) + 1
-
-        # -----------------------------
-        # FIND OR CREATE PLAYER ROW
+        # FIND PLAYER
         # -----------------------------
         player_row = None
 
         for i, row in enumerate(rows, start=2):
             if len(row) > 0:
                 name = row[0].strip().upper()
-                if full_name in name:  # FIXED MATCHING
+                if full_name in name:
                     player_row = i
                     break
 
+        # -----------------------------
+        # ADD PLAYER IF MISSING
+        # -----------------------------
         if not player_row:
-            print("➕ Adding new player:", full_name)
-            new_row = [full_name, phone] + [""] * (len(header) - 2)
+            print("➕ Adding player:", full_name)
+
+            new_row = [full_name] + [""] * (len(header) - 1)
             sheet.append_row(new_row)
+
             player_row = len(rows) + 2
 
         # -----------------------------
@@ -167,18 +178,18 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         current_value = sheet.cell(player_row, col_index).value
 
         if current_value == "P":
-            print("⚠️ Already marked present")
+            print("⚠️ Already marked")
             return
 
         # -----------------------------
-        # UPDATE CELL
+        # UPDATE
         # -----------------------------
         sheet.update_cell(player_row, col_index, "P")
 
-        print(f"✅ SUCCESS: {full_name} marked present on {today_str}")
+        print("✅ MARKED PRESENT")
 
     except Exception as e:
-        print("❌ Sheet update error:", e)
+        print("❌ ERROR:", e)
 
 
 # -------------------------------
@@ -283,6 +294,6 @@ def scan_rfid(data: ScanRequest):
 
 
 # -------------------------------
-# SERVE FRONTEND
+# FRONTEND
 # -------------------------------
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

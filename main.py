@@ -91,7 +91,7 @@ except Exception as e:
 
 
 # -------------------------------
-# 🔥 MULTI-TAB LOGGING (FIXED)
+# 🔥 FINAL FIXED LOGGING
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     print("🚀 log_to_sheet CALLED")
@@ -106,15 +106,19 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         print(f"📤 LOGGING: {full_name}")
 
+        # ✅ ALWAYS USE URL (NO NAME BUGS EVER AGAIN)
         spreadsheet = client.open_by_url(
-                "https://docs.google.com/spreadsheets/d/1cncmYwgWHD3MQPSEe_HHS3C3WOYznle6/edit"
+            "https://docs.google.com/spreadsheets/d/1tEtYSJnIWKn3uScBhn1e_chiEPLt3jCHF1O9XVvjhnM/edit"
         )
+
         SHEETS = ["U11 Attendance", "U16 Attendance"]
 
         target_sheet = None
         player_row = None
 
-        # FIND PLAYER
+        # -------------------------------
+        # FIND PLAYER IN BOTH TABS
+        # -------------------------------
         for sheet_name in SHEETS:
             sheet = spreadsheet.worksheet(sheet_name)
             data = sheet.get_all_values()
@@ -123,7 +127,6 @@ def log_to_sheet(first_name, last_name, phone, rfid):
                 if len(row) > 0:
                     name = row[0].strip().upper()
 
-                    # 🔥 STRONG MATCH
                     if full_name == name or full_name.split()[0] in name:
                         target_sheet = sheet
                         player_row = i
@@ -133,7 +136,9 @@ def log_to_sheet(first_name, last_name, phone, rfid):
             if target_sheet:
                 break
 
-        # IF NOT FOUND → ADD
+        # -------------------------------
+        # IF PLAYER NOT FOUND → ADD
+        # -------------------------------
         if not target_sheet:
             print("⚠️ Player NOT FOUND → adding to U11")
             target_sheet = spreadsheet.worksheet("U11 Attendance")
@@ -145,11 +150,12 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
             player_row = len(data) + 1
 
-        # GET HEADER
+        # -------------------------------
+        # FIND DATE COLUMN
+        # -------------------------------
         data = target_sheet.get_all_values()
         header = data[0]
 
-        # FIND TODAY COLUMN
         closest_col = None
         min_diff = 999
 
@@ -173,14 +179,18 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         col_index = header.index(closest_col) + 1
 
-        # CHECK EXISTING
+        # -------------------------------
+        # PREVENT DOUBLE CHECK-IN
+        # -------------------------------
         current_value = target_sheet.cell(player_row, col_index).value
 
         if current_value == "P":
             print("⚠️ Already marked present")
             return
 
-        # UPDATE
+        # -------------------------------
+        # MARK PRESENT
+        # -------------------------------
         target_sheet.update_cell(player_row, col_index, "P")
 
         print("✅ MARKED PRESENT IN SHEET")
@@ -256,7 +266,7 @@ def scan_rfid(data: ScanRequest):
         conn.commit()
         conn.close()
 
-        # 🔥 ALWAYS LOG (NO COOLDOWN)
+        # 🔥 LOG TO SHEET
         log_to_sheet(first_name, last_name, phone, data.rfid_uid)
 
         return {

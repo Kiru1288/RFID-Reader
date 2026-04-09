@@ -106,7 +106,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         print(f"📤 LOGGING: {full_name}")
 
-        spreadsheet = client.open("EthioCare Basketball Attendance")
+        spreadsheet = client.open("EthioCare Basketball Attendance (1) (1) ")
         SHEETS = ["U11 Attendance", "U16 Attendance"]
 
         target_sheet = None

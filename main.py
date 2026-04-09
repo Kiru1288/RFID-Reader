@@ -30,7 +30,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 def get_db():
     return psycopg2.connect(DATABASE_URL)
 
-
 def init_db():
     conn = get_db()
     cur = conn.cursor()
@@ -55,7 +54,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-
 
 init_db()
 
@@ -91,9 +89,10 @@ except Exception as e:
 
 
 # -------------------------------
-# 🔥 FINAL BULLETPROOF LOGGING
+# 🔥 ULTRA DEBUG LOGGING
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
+    print("\n================ DEBUG START ================")
     print("🚀 log_to_sheet CALLED")
 
     if not client:
@@ -104,106 +103,83 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         full_name = f"{first_name} {last_name}".strip().upper()
         today = datetime.now()
 
-        print(f"📤 LOGGING: {full_name}")
+        print(f"📤 NAME: {full_name}")
+        print(f"📅 TODAY: {today}")
 
-        # ✅ ALWAYS USE URL
-        spreadsheet = client.open_by_url(
-            "https://docs.google.com/spreadsheets/d/1tEtYSJnIWKn3uScBhn1e_chiEPLt3jCHF1O9XVvjhnM/edit"
-        )
+        url = "https://docs.google.com/spreadsheets/d/1tEtYSJnIWKn3uScBhn1e_chiEPLt3jCHF1O9XVvjhnM/edit"
+        spreadsheet = client.open_by_url(url)
+
+        print("✅ Spreadsheet opened")
 
         worksheets = spreadsheet.worksheets()
 
-        target_sheet = None
+        print("📄 SHEETS:")
+        for ws in worksheets:
+            print(" -", ws.title)
+
+        target_sheet = worksheets[0]  # 👈 FORCE FIRST SHEET (IMPORTANT FIX)
+
+        print(f"📍 USING SHEET: {target_sheet.title}")
+
+        data = target_sheet.get_all_values()
+
+        if not data:
+            print("❌ Sheet is empty")
+            return
+
+        header = data[0]
+
+        print("📊 HEADER:", header)
+
+        # -------------------------------
+        # FIND OR CREATE PLAYER
+        # -------------------------------
         player_row = None
 
-        # -------------------------------
-        # FIND PLAYER IN ANY ATTENDANCE TAB
-        # -------------------------------
-        for sheet in worksheets:
-            if "attendance" not in sheet.title.lower():
-                continue
-
-            data = sheet.get_all_values()
-
-            for i, row in enumerate(data[1:], start=2):
-                if len(row) > 0:
-                    name = row[0].strip().upper()
-
-                    if full_name == name or full_name.split()[0] in name:
-                        target_sheet = sheet
-                        player_row = i
-                        print(f"✅ Found in {sheet.title} at row {i}")
-                        break
-
-            if target_sheet:
+        for i, row in enumerate(data[1:], start=2):
+            if len(row) > 0 and row[0].strip().upper() == full_name:
+                player_row = i
+                print(f"✅ Found player at row {i}")
                 break
 
-        # -------------------------------
-        # IF NOT FOUND → ADD TO FIRST ATTENDANCE TAB
-        # -------------------------------
-        if not target_sheet:
-            print("⚠️ Player NOT FOUND → adding to first attendance sheet")
-
-            for sheet in worksheets:
-                if "attendance" in sheet.title.lower():
-                    target_sheet = sheet
-                    break
-
-            data = target_sheet.get_all_values()
-            header = data[0]
+        if not player_row:
+            print("⚠️ Adding new player")
 
             new_row = [full_name] + [""] * (len(header) - 1)
             target_sheet.append_row(new_row)
 
             player_row = len(data) + 1
+            print(f"✅ Added at row {player_row}")
 
         # -------------------------------
-        # FIND DATE COLUMN
+        # FIND TODAY COLUMN
         # -------------------------------
-        data = target_sheet.get_all_values()
-        header = data[0]
+        today_str = today.strftime("%d-%b")
+        print("📅 Looking for:", today_str)
 
-        closest_col = None
-        min_diff = 999
+        if today_str not in header:
+            print("❌ DATE COLUMN NOT FOUND → ADDING")
 
-        for col in header:
-            try:
-                col_date = datetime.strptime(col.strip(), "%d-%b").replace(year=today.year)
-                diff = abs((today - col_date).days)
+            target_sheet.update_cell(1, len(header) + 1, today_str)
+            header.append(today_str)
 
-                if diff < min_diff:
-                    min_diff = diff
-                    closest_col = col
+        col_index = header.index(today_str) + 1
 
-            except:
-                continue
-
-        if not closest_col:
-            print("❌ No date column found")
-            return
-
-        print(f"📅 Using column: {closest_col}")
-
-        col_index = header.index(closest_col) + 1
+        print(f"📍 Row: {player_row}, Col: {col_index}")
 
         # -------------------------------
-        # PREVENT DOUBLE CHECK-IN
+        # WRITE VALUE
         # -------------------------------
-        current_value = target_sheet.cell(player_row, col_index).value
+        print("✏️ Writing 'P'...")
 
-        if current_value == "P":
-            print("⚠️ Already marked present")
-            return
-
-        # -------------------------------
-        # MARK PRESENT
-        # -------------------------------
         target_sheet.update_cell(player_row, col_index, "P")
 
-        print("✅ MARKED PRESENT IN SHEET")
+        print("✅ SUCCESS")
 
     except Exception as e:
-        print("❌ FINAL ERROR:", e)
+        print("❌ FINAL ERROR:", str(e))
+
+    print("================ DEBUG END ================\n")
 
 
 # -------------------------------

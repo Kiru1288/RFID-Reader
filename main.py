@@ -63,6 +63,7 @@ init_db()
 # GOOGLE SHEETS
 # -------------------------------
 sheet = None
+client = None
 
 try:
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
@@ -80,9 +81,7 @@ try:
         )
 
         client = gspread.authorize(creds)
-        sheet = client.open("EthioCare Basketball Attendance").sheet1
-
-        print("✅ Google Sheets connected")
+        print("✅ Google Sheets connected (Render)")
 
     elif os.path.exists("credentials.json"):
         creds = ServiceAccountCredentials.from_json_keyfile_name(
@@ -90,24 +89,21 @@ try:
         )
 
         client = gspread.authorize(creds)
-        sheet = client.open("EthioCare Basketball Attendance").sheet1
-
-        print("✅ Google Sheets connected (local)")
+        print("✅ Google Sheets connected (Local)")
 
     else:
-        print("⚠️ No credentials")
+        print("⚠️ No Google credentials found")
 
 except Exception as e:
     print("❌ Google Sheets error:", e)
-    sheet = None
 
 
 # -------------------------------
-# 🔥 SMART LOGIC (FIXED FOR YOUR SHEET)
+# 🔥 MULTI-TAB SMART LOGIC
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
-    if not sheet:
-        print("❌ No sheet connection")
+    if not client:
+        print("❌ No Google client")
         return
 
     try:
@@ -116,13 +112,60 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         print("\n📤 LOGGING:", full_name)
 
-        data = sheet.get_all_values()
+        spreadsheet = client.open("EthioCare Basketball Attendance")
 
-        header = data[0]
-        rows = data[1:]
+        SHEETS = ["U11 Attendance", "U16 Attendance"]
+
+        target_sheet = None
+        player_row = None
 
         # -----------------------------
-        # 🔥 FIND CLOSEST DATE COLUMN
+        # FIND WHICH SHEET PLAYER IS IN
+        # -----------------------------
+        for sheet_name in SHEETS:
+            try:
+                sheet = spreadsheet.worksheet(sheet_name)
+                data = sheet.get_all_values()
+
+                rows = data[1:]
+
+                for i, row in enumerate(rows, start=2):
+                    if len(row) > 0:
+                        name = row[0].strip().upper()
+                        if full_name in name:
+                            target_sheet = sheet
+                            player_row = i
+                            print(f"✅ Found in {sheet_name}")
+                            break
+
+                if target_sheet:
+                    break
+
+            except Exception as e:
+                print(f"❌ Error reading {sheet_name}:", e)
+
+        # -----------------------------
+        # DEFAULT TO U11 IF NOT FOUND
+        # -----------------------------
+        if not target_sheet:
+            print("⚠️ Player not found — defaulting to U11")
+            target_sheet = spreadsheet.worksheet("U11 Attendance")
+            data = target_sheet.get_all_values()
+            header = data[0]
+
+            new_row = [full_name] + [""] * (len(header) - 1)
+            target_sheet.append_row(new_row)
+
+            player_row = len(data) + 1
+
+        # -----------------------------
+        # GET HEADER
+        # -----------------------------
+        data = target_sheet.get_all_values()
+        header = data[0]
+
+        # -----------------------------
+        # FIND CLOSEST DATE COLUMN
         # -----------------------------
         closest_col = None
         min_diff = 999
@@ -142,7 +185,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
                 continue
 
         if not closest_col:
-            print("❌ No valid date columns found")
+            print("❌ No date column found")
             return
 
         print("📅 Using column:", closest_col)
@@ -150,32 +193,9 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         col_index = header.index(closest_col) + 1
 
         # -----------------------------
-        # FIND PLAYER
-        # -----------------------------
-        player_row = None
-
-        for i, row in enumerate(rows, start=2):
-            if len(row) > 0:
-                name = row[0].strip().upper()
-                if full_name in name:
-                    player_row = i
-                    break
-
-        # -----------------------------
-        # ADD PLAYER IF MISSING
-        # -----------------------------
-        if not player_row:
-            print("➕ Adding player:", full_name)
-
-            new_row = [full_name] + [""] * (len(header) - 1)
-            sheet.append_row(new_row)
-
-            player_row = len(rows) + 2
-
-        # -----------------------------
         # CHECK EXISTING VALUE
         # -----------------------------
-        current_value = sheet.cell(player_row, col_index).value
+        current_value = target_sheet.cell(player_row, col_index).value
 
         if current_value == "P":
             print("⚠️ Already marked")
@@ -184,12 +204,12 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         # -----------------------------
         # UPDATE
         # -----------------------------
-        sheet.update_cell(player_row, col_index, "P")
+        target_sheet.update_cell(player_row, col_index, "P")
 
         print("✅ MARKED PRESENT")
 
     except Exception as e:
-        print("❌ ERROR:", e)
+        print("❌ FINAL ERROR:", e)
 
 
 # -------------------------------
@@ -238,7 +258,6 @@ def register_student(data: StudentCreate):
         """, (data.rfid_uid, data.first_name, data.last_name, data.phone))
 
         conn.commit()
-
         return {"success": True}
 
     except Exception as e:

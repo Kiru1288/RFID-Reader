@@ -60,7 +60,7 @@ def init_db():
 init_db()
 
 # -------------------------------
-# GOOGLE SHEETS
+# GOOGLE SHEETS (FIXED)
 # -------------------------------
 sheet = None
 
@@ -80,7 +80,7 @@ try:
         )
 
         client = gspread.authorize(creds)
-        sheet = client.open("EthioCare Basketball Attendance").sheet1
+        sheet = client.open("Basketball Check-In").sheet1
 
         print("✅ Google Sheets connected (Render)")
 
@@ -90,7 +90,7 @@ try:
         )
 
         client = gspread.authorize(creds)
-        sheet = client.open("EthioCare Basketball Attendance").sheet1
+        sheet = client.open("Basketball Check-In").sheet1
 
         print("✅ Google Sheets connected (Local)")
 
@@ -103,60 +103,63 @@ except Exception as e:
 
 
 # -------------------------------
-# 🔥 NEW GRID LOGIC
+# 🔥 FIXED LOGIC (ROBUST)
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     if not sheet:
+        print("❌ Sheet not connected")
         return
 
     try:
-        # -----------------------------
-        # FORMAT
-        # -----------------------------
         full_name = f"{first_name} {last_name}".strip().upper()
         now = datetime.now()
-        today_str = now.strftime("%-d-%b")  # e.g. 3-Apr
+        today_str = now.strftime("%d-%b").lstrip("0")  # FIXED FORMAT
 
-        # -----------------------------
-        # GET DATA
-        # -----------------------------
+        print("\n📤 GOOGLE SHEETS LOG START")
+        print("Name:", full_name)
+        print("Date:", today_str)
+
         data = sheet.get_all_values()
 
-        if not data or len(data) < 2:
-            print("Sheet empty")
+        if not data:
+            print("⚠️ Sheet empty — initializing")
+
+            sheet.append_row(["Name", "Phone", today_str])
+            sheet.append_row([full_name, phone, "P"])
             return
 
         header = data[0]
         rows = data[1:]
 
+        print("Header:", header)
+
         # -----------------------------
-        # FIND PLAYER
+        # FIND OR CREATE DATE COLUMN
+        # -----------------------------
+        if today_str not in header:
+            print("➕ Adding new date column:", today_str)
+            sheet.update_cell(1, len(header) + 1, today_str)
+            header.append(today_str)
+
+        col_index = header.index(today_str) + 1
+
+        # -----------------------------
+        # FIND OR CREATE PLAYER ROW
         # -----------------------------
         player_row = None
 
         for i, row in enumerate(rows, start=2):
-            name = row[0].strip().upper()
-            if name == full_name:
-                player_row = i
-                break
+            if len(row) > 0:
+                name = row[0].strip().upper()
+                if full_name in name:  # FIXED MATCHING
+                    player_row = i
+                    break
 
         if not player_row:
-            print(f"❌ Player not found: {full_name}")
-            return
-
-        # -----------------------------
-        # FIND DATE COLUMN
-        # -----------------------------
-        col_index = None
-
-        for i, col in enumerate(header):
-            if col.strip() == today_str:
-                col_index = i + 1
-                break
-
-        if not col_index:
-            print(f"❌ Date column not found: {today_str}")
-            return
+            print("➕ Adding new player:", full_name)
+            new_row = [full_name, phone] + [""] * (len(header) - 2)
+            sheet.append_row(new_row)
+            player_row = len(rows) + 2
 
         # -----------------------------
         # CHECK EXISTING VALUE
@@ -172,7 +175,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         # -----------------------------
         sheet.update_cell(player_row, col_index, "P")
 
-        print(f"✅ {full_name} marked present on {today_str}")
+        print(f"✅ SUCCESS: {full_name} marked present on {today_str}")
 
     except Exception as e:
         print("❌ Sheet update error:", e)

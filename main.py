@@ -53,7 +53,6 @@ def init_db():
     conn = get_db()
     cur = conn.cursor()
 
-    # STUDENTS
     cur.execute("""
     CREATE TABLE IF NOT EXISTS students (
         id SERIAL PRIMARY KEY,
@@ -64,45 +63,15 @@ def init_db():
     )
     """)
 
-    # ATTENDANCE
     cur.execute("""
     CREATE TABLE IF NOT EXISTS attendance (
         id SERIAL PRIMARY KEY,
         rfid_uid TEXT NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        date TEXT
     )
     """)
 
-    # ADD DATE COLUMN IF MISSING
-    cur.execute("""
-    DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name='attendance' AND column_name='date'
-        ) THEN
-            ALTER TABLE attendance ADD COLUMN date TEXT;
-        END IF;
-    END$$;
-    """)
-
-    # BACKFILL DATE (SAFE FIX)
-    cur.execute("""
-    UPDATE attendance
-    SET date = (timestamp::date)::text
-    WHERE date IS NULL;
-    """)
-
-    # 🔥 REMOVE DUPLICATES (CRITICAL FIX)
-    cur.execute("""
-    DELETE FROM attendance a
-    USING attendance b
-    WHERE a.id < b.id
-      AND a.rfid_uid = b.rfid_uid
-      AND a.date = b.date;
-    """)
-
-    # CREATE UNIQUE INDEX
     cur.execute("""
     CREATE UNIQUE INDEX IF NOT EXISTS unique_daily_scan
     ON attendance (rfid_uid, date)
@@ -112,7 +81,7 @@ def init_db():
     cur.close()
     conn.close()
 
-    logger.info("✅ DB READY (FULLY FIXED + CLEANED)")
+    logger.info("✅ DB READY")
 
 init_db()
 
@@ -167,21 +136,28 @@ def get_sheet():
         return None
     return client.open_by_key(SHEET_ID).get_worksheet(0)
 
+# 🔥 CRITICAL FIX: RETURN TRUE/FALSE
 def log_to_sheet(first_name, last_name):
     try:
         if not client:
-            return
+            logger.error("❌ NO SHEET CLIENT")
+            return False
 
         sheet = get_sheet()
         if not sheet:
-            return
+            logger.error("❌ NO SHEET FOUND")
+            return False
 
         data = sheet.get_all_values()
         header = data[0]
         today = today_label()
 
+        logger.info(f"📅 TODAY: {today}")
+        logger.info(f"📊 HEADERS: {header}")
+
         if today not in header:
-            return
+            logger.error("❌ DATE COLUMN NOT FOUND")
+            return False
 
         col = header.index(today) + 1
         full_name = f"{first_name} {last_name}".strip().upper()
@@ -189,13 +165,18 @@ def log_to_sheet(first_name, last_name):
         for i, row in enumerate(data[1:], start=2):
             if row and row[0].strip().upper() == full_name:
                 sheet.update_cell(i, col, "P")
-                return
+                logger.info(f"✅ SHEET UPDATED row={i}, col={col}")
+                return True
+
+        logger.error("❌ NAME NOT FOUND IN SHEET")
+        return False
 
     except Exception as e:
         logger.error(f"❌ SHEET ERROR: {str(e)}")
+        return False
 
 # -------------------------------
-# CORE LOGIC
+# CORE LOGIC (FIXED)
 # -------------------------------
 def process_check_in(rfid_uid: str):
     logger.info(f"📡 SCAN HIT: {rfid_uid}")
@@ -213,27 +194,31 @@ def process_check_in(rfid_uid: str):
         if not student:
             return {"status": "not_found"}
 
-        # CHECK DUPLICATE
+        today = datetime.now().date().isoformat()
+
+        # CHECK DB FIRST
         cur.execute("""
         SELECT 1 FROM attendance
-        WHERE rfid_uid=%s AND date = %s
-        """, (rfid_uid, datetime.now().date().isoformat()))
+        WHERE rfid_uid=%s AND date=%s
+        """, (rfid_uid, today))
 
         if cur.fetchone():
             return {"status": "already_checked"}
 
-        now = datetime.now()
-        today = now.date().isoformat()
+        # 🔥 FIX: UPDATE SHEET FIRST
+        sheet_success = log_to_sheet(student["first_name"], student["last_name"])
 
-        # SAFE INSERT
+        if not sheet_success:
+            logger.error("❌ BLOCKED: SHEET FAILED → NOT SAVING TO DB")
+            return {"status": "sheet_failed"}
+
+        # ONLY SAVE IF SHEET WORKED
         cur.execute("""
         INSERT INTO attendance (rfid_uid, timestamp, date)
         VALUES (%s, %s, %s)
-        """, (rfid_uid, now, today))
+        """, (rfid_uid, datetime.now(), today))
 
         conn.commit()
-
-        log_to_sheet(student["first_name"], student["last_name"])
 
         return {
             "status": "success",

@@ -136,19 +136,36 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         print("👤 NAME:", full_name)
         print("📅 DATE:", today)
 
-        spreadsheet = client.open_by_url(
-            "https://docs.google.com/spreadsheets/d/1tEtYSJnIWKn3uScBhn1e_chiEPLt3jCHF1O9XVvjhnM/edit"
-        )
+        # ✅ USE YOUR ACTUAL SHEET URL (FIXED)
+        SHEET_URL = "https://docs.google.com/spreadsheets/d/1-14fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-O/edit"
 
-        print("✅ OPENED SHEET")
+        print("🌍 OPENING SHEET:", SHEET_URL)
 
-        sheet = spreadsheet.sheet1
+        spreadsheet = client.open_by_url(SHEET_URL)
+
+        print("✅ OPENED SPREADSHEET:", spreadsheet.title)
+
+        # 🔥 DEBUG: LIST ALL TABS
+        worksheets = spreadsheet.worksheets()
+        print("📄 AVAILABLE TABS:", [ws.title for ws in worksheets])
+
+        # ✅ USE FIRST TAB (Sheet1)
+        sheet = spreadsheet.get_worksheet(0)
+        print("📄 USING TAB:", sheet.title)
+
         data = sheet.get_all_values()
 
-        header = data[0] if data else []
+        if not data:
+            print("⚠️ SHEET EMPTY → CREATING HEADER")
+            sheet.append_row(["Player Name", today])
+            data = sheet.get_all_values()
+
+        header = data[0]
         print("📊 HEADER:", header)
 
+        # -------------------------
         # FIND PLAYER
+        # -------------------------
         row_index = None
 
         for i, row in enumerate(data[1:], start=2):
@@ -158,13 +175,15 @@ def log_to_sheet(first_name, last_name, phone, rfid):
                 break
 
         if not row_index:
-            print("➕ ADDING NEW PLAYER")
+            print("➕ ADDING NEW PLAYER:", full_name)
             sheet.append_row([full_name])
             row_index = len(data) + 1
 
+        # -------------------------
         # FIND / CREATE DATE COLUMN
+        # -------------------------
         if today not in header:
-            print("➕ ADDING NEW DATE COLUMN")
+            print("➕ ADDING NEW DATE COLUMN:", today)
             sheet.update_cell(1, len(header) + 1, today)
             header.append(today)
 
@@ -174,13 +193,12 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         sheet.update_cell(row_index, col_index, "P")
 
-        print("✅ ATTENDANCE MARKED")
+        print("✅ ATTENDANCE MARKED SUCCESSFULLY")
 
     except Exception as e:
         print("❌ SHEET ERROR:", str(e))
 
     print("================ LOGGING END ================\n")
-
 
 # -------------------------------
 # MODELS

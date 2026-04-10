@@ -52,41 +52,47 @@ def get_db():
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    logger.info("🛠 Initializing DB...")
-
     conn = get_db()
     cur = conn.cursor()
 
+    # -------------------------
+    # STUDENTS TABLE
+    # -------------------------
     cur.execute("""
     CREATE TABLE IF NOT EXISTS students (
         id SERIAL PRIMARY KEY,
         rfid_uid TEXT UNIQUE NOT NULL,
-        first_name TEXT NOT NULL,
-        last_name TEXT NOT NULL,
+        first_name TEXT,
+        last_name TEXT,
         phone TEXT
     )
     """)
 
+    # -------------------------
+    # ATTENDANCE TABLE (FIXED)
+    # -------------------------
     cur.execute("""
     CREATE TABLE IF NOT EXISTS attendance (
         id SERIAL PRIMARY KEY,
         rfid_uid TEXT NOT NULL,
-        timestamp TIMESTAMP NOT NULL
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        date TEXT NOT NULL
     )
     """)
 
-    conn.commit()
-
-    # Create unique daily attendance index safely
+    # -------------------------
+    # SAFE UNIQUE INDEX
+    # -------------------------
     cur.execute("""
     CREATE UNIQUE INDEX IF NOT EXISTS unique_daily_scan
-    ON attendance (rfid_uid, DATE(timestamp))
+    ON attendance (rfid_uid, date)
     """)
 
     conn.commit()
+    cur.close()
     conn.close()
 
-    logger.info("✅ DB READY")
+    print("✅ DB READY")
 
 init_db()
 

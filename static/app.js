@@ -1,5 +1,5 @@
 // -----------------------------
-// CONFIG (FIXED)
+// CONFIG
 // -----------------------------
 const API_URL = "https://rfid-reader-hrip.onrender.com";
 
@@ -18,93 +18,131 @@ const lastInput = document.getElementById("lastName");
 const phoneInput = document.getElementById("phoneInput");
 const saveBtn = document.getElementById("saveBtn");
 
+// -----------------------------
+// STATE
+// -----------------------------
 let currentRFID = null;
 let scanTimeout = null;
+let lastScannedRFID = null;
+let lastScanAt = 0;
+const SCAN_COOLDOWN_MS = 2000;
 
 // -----------------------------
-// SMART AUTO FOCUS
+// FOCUS CONTROL
 // -----------------------------
 function focusInput() {
-  scanInput.focus();
+  if (formBox.style.display !== "block") {
+    scanInput.focus();
+  }
 }
 
-// Only focus scanner when clicking OUTSIDE form
 document.addEventListener("click", (e) => {
   const isInsideForm = e.target.closest("#registerForm");
-
   if (!isInsideForm) {
     focusInput();
   }
 });
 
-// Prevent click interruption edge case
 saveBtn.addEventListener("mousedown", (e) => {
   e.stopPropagation();
 });
 
-// -----------------------------
-// SCAN HANDLER
-// -----------------------------
-scanInput.addEventListener("input", (e) => {
-  const value = e.target.value;
-
-  clearTimeout(scanTimeout);
-
-  scanTimeout = setTimeout(() => {
-    if (value.length > 0) {
-      console.log("📡 SCANNED VALUE:", value);
-      handleScan(value.trim());
-      scanInput.value = "";
-    }
-  }, 100);
-});
+setInterval(() => {
+  focusInput();
+}, 1000);
 
 // -----------------------------
-// HANDLE SCAN (DEBUG BOOSTED)
+// RESET UI
 // -----------------------------
-async function handleScan(rfid) {
-  console.log("🚀 Sending scan to backend:", rfid);
-  console.log("🌍 API URL:", `${API_URL}/scan`);
+function resetUI() {
+  resultBox.style.background = "#1f2937";
+  nameEl.innerText = "Scan RFID Bracelet";
+  phoneEl.innerText = "";
+  statusEl.innerText = "";
+  hideForm();
+  scanInput.value = "";
+  focusInput();
+}
 
-  try {
-    const res = await fetch(`${API_URL}/scan`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ rfid_uid: rfid })
-    });
-
-    console.log("📡 RESPONSE STATUS:", res.status);
-
-    const data = await res.json();
-
-    console.log("📥 RESPONSE DATA:", data);
-
-    if (data.found) {
-      hideForm();
-      showSuccess(data);
-    } else {
-      showRegisterForm(data.rfid_uid);
-    }
-
-  } catch (err) {
-    console.error("❌ FETCH ERROR:", err);
-    showError("Server Error");
-  }
+function flashReset(delay = 3000) {
+  setTimeout(() => {
+    resetUI();
+  }, delay);
 }
 
 // -----------------------------
-// SHOW REGISTER FORM
+// UI STATES
 // -----------------------------
+function showState({ bg, title, phone = "", status = "", reset = true, delay = 3000 }) {
+  resultBox.style.background = bg;
+  nameEl.innerText = title;
+  phoneEl.innerText = phone;
+  statusEl.innerText = status;
+
+  if (reset) {
+    flashReset(delay);
+  }
+}
+
+function showSuccess(data) {
+  let extraStatus = "✅ Checked In";
+
+  if (data.sheet_logged === false && data.sheet_reason === "not_basketball_day") {
+    extraStatus = "✅ Checked In (Not basketball day on sheet)";
+  } else if (data.sheet_logged === false && data.sheet_reason === "user_not_in_sheet") {
+    extraStatus = "✅ Checked In (User not on sheet)";
+  } else if (data.sheet_logged === true) {
+    extraStatus = "✅ Checked In + Sheet Updated";
+  }
+
+  showState({
+    bg: "#16a34a",
+    title: `${data.first_name} ${data.last_name}`,
+    phone: data.phone ? `📞 ${data.phone}` : "",
+    status: extraStatus
+  });
+}
+
+function showAlreadyCheckedIn(data) {
+  let extraStatus = "⚠️ Already checked in today";
+
+  if (data.sheet_logged === false && data.sheet_reason === "not_basketball_day") {
+    extraStatus = "⚠️ Already checked in today (Not basketball day on sheet)";
+  }
+
+  showState({
+    bg: "#d97706",
+    title: `${data.first_name} ${data.last_name}`,
+    phone: data.phone ? `📞 ${data.phone}` : "",
+    status: extraStatus
+  });
+}
+
+function showError(message) {
+  showState({
+    bg: "#dc2626",
+    title: "Error",
+    phone: "",
+    status: `❌ ${message}`
+  });
+}
+
+function showWarning(message) {
+  showState({
+    bg: "#d97706",
+    title: "Warning",
+    phone: "",
+    status: `⚠️ ${message}`
+  });
+}
+
 function showRegisterForm(rfid) {
   currentRFID = rfid;
 
   resultBox.style.background = "#2563eb";
-
   nameEl.innerText = "New Bracelet Detected";
   phoneEl.innerText = "";
-  statusEl.innerText = "Enter student info";
+  statusEl.innerText = "Enter student info below";
 
   formBox.style.display = "block";
 
@@ -115,20 +153,136 @@ function showRegisterForm(rfid) {
   firstInput.focus();
 }
 
+function hideForm() {
+  formBox.style.display = "none";
+}
+
 // -----------------------------
-// SAVE USER
+// SCAN INPUT HANDLER
+// -----------------------------
+scanInput.addEventListener("input", (e) => {
+  const value = e.target.value;
+
+  clearTimeout(scanTimeout);
+
+  scanTimeout = setTimeout(() => {
+    const trimmed = value.trim();
+
+    if (trimmed.length > 0) {
+      handleScan(trimmed);
+      scanInput.value = "";
+    }
+  }, 100);
+});
+
+// -----------------------------
+// SCAN LOGIC
+// -----------------------------
+async function handleScan(rfid) {
+  const now = Date.now();
+
+  if (rfid === lastScannedRFID && now - lastScanAt < SCAN_COOLDOWN_MS) {
+    console.log("⏱️ Duplicate scan blocked:", rfid);
+    return;
+  }
+
+  lastScannedRFID = rfid;
+  lastScanAt = now;
+  currentRFID = rfid;
+
+  console.log("📡 SCANNED VALUE:", rfid);
+  console.log("🚀 Sending scan to backend:", `${API_URL}/scan`);
+
+  try {
+    const res = await fetch(`${API_URL}/scan`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ rfid_uid: rfid })
+    });
+
+    const data = await res.json();
+
+    console.log("📥 SCAN RESPONSE:", data);
+
+    if (!res.ok) {
+      showError(data.message || "Scan failed");
+      return;
+    }
+
+    switch (data.status) {
+      case "success":
+        hideForm();
+        showSuccess(data);
+        break;
+
+      case "already_checked_in":
+        hideForm();
+        showAlreadyCheckedIn(data);
+        break;
+
+      case "not_found":
+        showRegisterForm(rfid);
+        break;
+
+      case "invalid_rfid":
+        hideForm();
+        showError("Invalid RFID");
+        break;
+
+      case "db_error":
+        hideForm();
+        showError("Database Error");
+        break;
+
+      default:
+        if (data.found === false) {
+          showRegisterForm(rfid);
+        } else {
+          hideForm();
+          showError(data.message || "Unknown response");
+        }
+        break;
+    }
+  } catch (err) {
+    console.error("❌ FETCH ERROR:", err);
+    hideForm();
+    showError("Server Error");
+  }
+}
+
+// -----------------------------
+// REGISTER LOGIC
 // -----------------------------
 saveBtn.addEventListener("click", async () => {
   const first = firstInput.value.trim();
   const last = lastInput.value.trim();
   const phone = phoneInput.value.trim();
 
-  if (!first) {
-    alert("First name required");
+  if (!currentRFID) {
+    showError("No RFID to register");
     return;
   }
 
-  console.log("📝 REGISTERING USER:", first, last, phone);
+  if (!first) {
+    showWarning("First name required");
+    firstInput.focus();
+    return;
+  }
+
+  if (!last) {
+    showWarning("Last name required");
+    lastInput.focus();
+    return;
+  }
+
+  console.log("📝 REGISTERING USER:", {
+    rfid_uid: currentRFID,
+    first_name: first,
+    last_name: last,
+    phone: phone
+  });
 
   try {
     const res = await fetch(`${API_URL}/register`, {
@@ -144,25 +298,35 @@ saveBtn.addEventListener("click", async () => {
       })
     });
 
-    console.log("📡 REGISTER STATUS:", res.status);
-
     const data = await res.json();
 
     console.log("📥 REGISTER RESPONSE:", data);
 
-    if (data.error || data.success === false) {
-      showError("Already Registered");
+    if (!res.ok) {
+      showError(data.message || "Register failed");
       return;
     }
 
-    hideForm();
+    if (data.status === "already_registered") {
+      showWarning("RFID already registered");
+      return;
+    }
 
-    showSuccess({
-      first_name: first,
-      last_name: last,
-      phone: phone
-    });
+    if (data.success === true || data.status === "registered") {
+      hideForm();
 
+      showState({
+        bg: "#16a34a",
+        title: `${first} ${last}`,
+        phone: phone ? `📞 ${phone}` : "",
+        status: "✅ Registered Successfully"
+      });
+
+      currentRFID = null;
+      return;
+    }
+
+    showError(data.message || "Register failed");
   } catch (err) {
     console.error("❌ REGISTER ERROR:", err);
     showError("Register Error");
@@ -170,51 +334,9 @@ saveBtn.addEventListener("click", async () => {
 });
 
 // -----------------------------
-// UI STATES
-// -----------------------------
-function showSuccess(data) {
-  resultBox.style.background = "#16a34a";
-
-  nameEl.innerText = `${data.first_name} ${data.last_name}`;
-  phoneEl.innerText = data.phone ? `📞 ${data.phone}` : "";
-  statusEl.innerText = "✅ Checked In";
-
-  flashReset();
-}
-
-function showError(message) {
-  resultBox.style.background = "#dc2626";
-
-  nameEl.innerText = "Error";
-  phoneEl.innerText = "";
-  statusEl.innerText = `❌ ${message}`;
-
-  flashReset();
-}
-
-// -----------------------------
-// FORM CONTROL
-// -----------------------------
-function hideForm() {
-  formBox.style.display = "none";
-}
-
-// -----------------------------
-// RESET UI
-// -----------------------------
-function flashReset() {
-  setTimeout(() => {
-    resultBox.style.background = "#1f2937";
-    nameEl.innerText = "Scan RFID Bracelet";
-    phoneEl.innerText = "";
-    statusEl.innerText = "";
-  }, 3000);
-}
-
-// -----------------------------
 // INIT
 // -----------------------------
 window.onload = () => {
-  focusInput();
-  console.log("🔥 RFID App Ready (CONNECTED TO BACKEND)");
+  resetUI();
+  console.log("🔥 RFID App Ready");
 };

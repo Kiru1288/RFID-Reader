@@ -1,7 +1,8 @@
 // -----------------------------
-// CONFIG
+// CONFIG (FIXED)
 // -----------------------------
-const API_URL = "";
+const API_URL = "https://rfid-reader-hrip.onrender.com";
+
 // -----------------------------
 // ELEMENTS
 // -----------------------------
@@ -21,7 +22,7 @@ let currentRFID = null;
 let scanTimeout = null;
 
 // -----------------------------
-// SMART AUTO FOCUS (FIXED)
+// SMART AUTO FOCUS
 // -----------------------------
 function focusInput() {
   scanInput.focus();
@@ -51,6 +52,7 @@ scanInput.addEventListener("input", (e) => {
 
   scanTimeout = setTimeout(() => {
     if (value.length > 0) {
+      console.log("📡 SCANNED VALUE:", value);
       handleScan(value.trim());
       scanInput.value = "";
     }
@@ -58,10 +60,11 @@ scanInput.addEventListener("input", (e) => {
 });
 
 // -----------------------------
-// HANDLE SCAN
+// HANDLE SCAN (DEBUG BOOSTED)
 // -----------------------------
 async function handleScan(rfid) {
-  console.log("Scanned:", rfid);
+  console.log("🚀 Sending scan to backend:", rfid);
+  console.log("🌍 API URL:", `${API_URL}/scan`);
 
   try {
     const res = await fetch(`${API_URL}/scan`, {
@@ -72,7 +75,11 @@ async function handleScan(rfid) {
       body: JSON.stringify({ rfid_uid: rfid })
     });
 
+    console.log("📡 RESPONSE STATUS:", res.status);
+
     const data = await res.json();
+
+    console.log("📥 RESPONSE DATA:", data);
 
     if (data.found) {
       hideForm();
@@ -82,7 +89,7 @@ async function handleScan(rfid) {
     }
 
   } catch (err) {
-    console.error(err);
+    console.error("❌ FETCH ERROR:", err);
     showError("Server Error");
   }
 }
@@ -121,6 +128,8 @@ saveBtn.addEventListener("click", async () => {
     return;
   }
 
+  console.log("📝 REGISTERING USER:", first, last, phone);
+
   try {
     const res = await fetch(`${API_URL}/register`, {
       method: "POST",
@@ -135,7 +144,11 @@ saveBtn.addEventListener("click", async () => {
       })
     });
 
+    console.log("📡 REGISTER STATUS:", res.status);
+
     const data = await res.json();
+
+    console.log("📥 REGISTER RESPONSE:", data);
 
     if (data.error || data.success === false) {
       showError("Already Registered");
@@ -151,7 +164,7 @@ saveBtn.addEventListener("click", async () => {
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("❌ REGISTER ERROR:", err);
     showError("Register Error");
   }
 });
@@ -203,5 +216,5 @@ function flashReset() {
 // -----------------------------
 window.onload = () => {
   focusInput();
-  console.log("RFID App Ready");
+  console.log("🔥 RFID App Ready (CONNECTED TO BACKEND)");
 };

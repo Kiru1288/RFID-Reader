@@ -72,28 +72,27 @@ init_db()
 # -------------------------------
 client = None
 
+# 🔥 YOUR REAL SHEET ID (FINAL FIX)
+SHEET_ID = "1-l4fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-Q"
+
 try:
     print("\n🌍 Setting up Google Sheets...")
 
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
     if creds_json:
         print("✅ FOUND GOOGLE_CREDENTIALS ENV")
 
         creds_dict = json.loads(creds_json)
-
-        # 🔥 DEBUG: SHOW SERVICE ACCOUNT EMAIL
-        print("🔑 SERVICE ACCOUNT EMAIL (ENV):", creds_dict.get("client_email"))
-
-        scope = [
-            "https://spreadsheets.google.com/feeds",
-            "https://www.googleapis.com/auth/drive"
-        ]
+        print("🔑 SERVICE ACCOUNT:", creds_dict.get("client_email"))
 
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-
-        print("✅ GOOGLE SHEETS CONNECTED (ENV)")
 
     elif os.path.exists("credentials.json"):
         print("⚠️ USING LOCAL credentials.json")
@@ -101,43 +100,34 @@ try:
         with open("credentials.json") as f:
             creds_dict = json.load(f)
 
-        # 🔥 DEBUG: SHOW SERVICE ACCOUNT EMAIL
-        print("🔑 SERVICE ACCOUNT EMAIL (LOCAL):", creds_dict.get("client_email"))
-
-        scope = [
-            "https://spreadsheets.google.com/feeds",
-            "https://www.googleapis.com/auth/drive"
-        ]
+        print("🔑 SERVICE ACCOUNT:", creds_dict.get("client_email"))
 
         creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
         client = gspread.authorize(creds)
 
-        print("✅ GOOGLE SHEETS CONNECTED (LOCAL)")
-
     else:
         print("❌ NO GOOGLE CREDENTIALS FOUND")
+
+    print("✅ GOOGLE SHEETS CONNECTED")
 
 except Exception as e:
     print("❌ GOOGLE ERROR:", str(e))
 
 # -------------------------------
-# NAME CLEANER
+# HELPERS
 # -------------------------------
 def clean_name(name):
     return " ".join(name.strip().upper().split())
 
-
 # -------------------------------
-# LOG TO SHEET
+# TEST ROUTE
 # -------------------------------
 @app.get("/sheet-test")
 def sheet_test():
     try:
-        SHEET_URL = "https://docs.google.com/spreadsheets/d/1-l4fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-Q/edit?gid=0#gid=0"
-
         print("🧪 TESTING SHEET ACCESS...")
 
-        spreadsheet = client.open_by_url(SHEET_URL)
+        spreadsheet = client.open_by_key(SHEET_ID)
 
         print("✅ ACCESS SUCCESS:", spreadsheet.title)
 
@@ -146,6 +136,10 @@ def sheet_test():
     except Exception as e:
         print("❌ ACCESS FAILED:", str(e))
         return {"status": "error", "error": str(e)}
+
+# -------------------------------
+# LOG TO SHEET
+# -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     print("\n================ LOGGING START ================")
 
@@ -160,64 +154,42 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         print("👤 NAME:", full_name)
         print("📅 DATE:", today)
 
-        # ✅ USE YOUR ACTUAL SHEET URL (FIXED)
-        SHEET_URL = "https://docs.google.com/spreadsheets/d/1-14fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-O/edit"
+        spreadsheet = client.open_by_key(SHEET_ID)
+        print("✅ OPENED:", spreadsheet.title)
 
-        print("🌍 OPENING SHEET:", SHEET_URL)
-
-        spreadsheet = client.open_by_url(SHEET_URL)
-
-        print("✅ OPENED SPREADSHEET:", spreadsheet.title)
-
-        # 🔥 DEBUG: LIST ALL TABS
-        worksheets = spreadsheet.worksheets()
-        print("📄 AVAILABLE TABS:", [ws.title for ws in worksheets])
-
-        # ✅ USE FIRST TAB (Sheet1)
         sheet = spreadsheet.get_worksheet(0)
-        print("📄 USING TAB:", sheet.title)
 
         data = sheet.get_all_values()
 
         if not data:
-            print("⚠️ SHEET EMPTY → CREATING HEADER")
             sheet.append_row(["Player Name", today])
             data = sheet.get_all_values()
 
         header = data[0]
-        print("📊 HEADER:", header)
 
-        # -------------------------
         # FIND PLAYER
-        # -------------------------
         row_index = None
-
         for i, row in enumerate(data[1:], start=2):
             if row and clean_name(row[0]) == full_name:
                 row_index = i
-                print(f"✅ PLAYER FOUND ROW {i}")
                 break
 
         if not row_index:
-            print("➕ ADDING NEW PLAYER:", full_name)
             sheet.append_row([full_name])
             row_index = len(data) + 1
 
-        # -------------------------
-        # FIND / CREATE DATE COLUMN
-        # -------------------------
+        # DATE COLUMN
         if today not in header:
-            print("➕ ADDING NEW DATE COLUMN:", today)
             sheet.update_cell(1, len(header) + 1, today)
             header.append(today)
 
         col_index = header.index(today) + 1
 
-        print(f"📍 WRITING TO ROW {row_index}, COL {col_index}")
+        print(f"📍 WRITING → ROW {row_index}, COL {col_index}")
 
         sheet.update_cell(row_index, col_index, "P")
 
-        print("✅ ATTENDANCE MARKED SUCCESSFULLY")
+        print("✅ SUCCESS")
 
     except Exception as e:
         print("❌ SHEET ERROR:", str(e))
@@ -233,27 +205,14 @@ class StudentCreate(BaseModel):
     last_name: str
     phone: str
 
-
 class ScanRequest(BaseModel):
     rfid_uid: str
-
-
-# -------------------------------
-# TEST ROUTE (VERY IMPORTANT)
-# -------------------------------
-@app.get("/test")
-def test():
-    print("🧪 TEST ENDPOINT HIT")
-    return {"status": "working"}
-
 
 # -------------------------------
 # REGISTER
 # -------------------------------
 @app.post("/register")
 def register_student(data: StudentCreate):
-    print("📝 REGISTER:", data)
-
     conn = get_db()
     cur = conn.cursor()
 
@@ -264,21 +223,16 @@ def register_student(data: StudentCreate):
         """, (data.rfid_uid, data.first_name, data.last_name, data.phone))
 
         conn.commit()
-
-        print("✅ REGISTERED")
-
         return {"success": True}
 
     except Exception as e:
-        print("❌ REGISTER ERROR:", str(e))
         return {"success": False, "error": str(e)}
 
     finally:
         conn.close()
 
-
 # -------------------------------
-# SCAN (CRITICAL)
+# SCAN
 # -------------------------------
 @app.post("/scan")
 def scan_rfid(data: ScanRequest):
@@ -298,8 +252,6 @@ def scan_rfid(data: ScanRequest):
     if row:
         first_name, last_name, phone = row
 
-        print("✅ USER FOUND:", first_name, last_name)
-
         cur.execute("""
             INSERT INTO attendance (rfid_uid, timestamp)
             VALUES (%s, %s)
@@ -318,14 +270,8 @@ def scan_rfid(data: ScanRequest):
         }
 
     else:
-        print("❌ USER NOT FOUND")
-
         conn.close()
-        return {
-            "found": False,
-            "rfid_uid": data.rfid_uid
-        }
-
+        return {"found": False}
 
 # -------------------------------
 # FRONTEND

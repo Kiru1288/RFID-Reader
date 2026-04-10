@@ -54,7 +54,7 @@ def init_db():
     conn = get_db()
     cur = conn.cursor()
 
-    # STUDENTS
+    # STUDENTS TABLE
     cur.execute("""
     CREATE TABLE IF NOT EXISTS students (
         id SERIAL PRIMARY KEY,
@@ -65,7 +65,7 @@ def init_db():
     )
     """)
 
-    # ATTENDANCE (BASE TABLE ONLY)
+    # ATTENDANCE TABLE
     cur.execute("""
     CREATE TABLE IF NOT EXISTS attendance (
         id SERIAL PRIMARY KEY,
@@ -74,7 +74,7 @@ def init_db():
     )
     """)
 
-    # ADD DATE COLUMN IF MISSING (MIGRATION FIX)
+    # ADD DATE COLUMN IF MISSING
     cur.execute("""
     DO $$
     BEGIN
@@ -88,14 +88,14 @@ def init_db():
     END$$;
     """)
 
-    # BACKFILL DATE
+    # SAFE BACKFILL (FIXED — NO TO_CHAR ERROR)
     cur.execute("""
     UPDATE attendance
-    SET date = TO_CHAR(timestamp, 'DD-Mon')
+    SET date = (timestamp::timestamp)::date::text
     WHERE date IS NULL;
     """)
 
-    # UNIQUE INDEX (DAILY SCAN)
+    # UNIQUE INDEX
     cur.execute("""
     CREATE UNIQUE INDEX IF NOT EXISTS unique_daily_scan
     ON attendance (rfid_uid, date)
@@ -105,7 +105,7 @@ def init_db():
     cur.close()
     conn.close()
 
-    logger.info("✅ DB READY (MIGRATED)")
+    logger.info("✅ DB READY (FULLY FIXED)")
 
 init_db()
 
@@ -208,7 +208,6 @@ def process_check_in(rfid_uid: str):
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
     try:
-        # FIND USER
         cur.execute("SELECT * FROM students WHERE rfid_uid=%s", (rfid_uid,))
         student = cur.fetchone()
 
@@ -218,7 +217,6 @@ def process_check_in(rfid_uid: str):
         first = student["first_name"]
         last = student["last_name"]
 
-        # CHECK DUPLICATE
         cur.execute("""
         SELECT 1 FROM attendance
         WHERE rfid_uid=%s AND DATE(timestamp)=CURRENT_DATE
@@ -226,9 +224,8 @@ def process_check_in(rfid_uid: str):
         if cur.fetchone():
             return {"status": "already_checked"}
 
-        # INSERT (FIXED)
         now = datetime.now()
-        today = now.strftime("%d-%b")
+        today = now.date().isoformat()  # FIXED
 
         cur.execute("""
         INSERT INTO attendance (rfid_uid, timestamp, date)

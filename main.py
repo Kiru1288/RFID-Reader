@@ -89,6 +89,13 @@ except Exception as e:
 
 
 # -------------------------------
+# 🔥 NAME CLEANER (CRITICAL FIX)
+# -------------------------------
+def clean_name(name):
+    return " ".join(name.strip().upper().split())
+
+
+# -------------------------------
 # 🔥 ULTRA DEBUG LOGGING
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
@@ -100,10 +107,10 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         return
 
     try:
-        full_name = f"{first_name} {last_name}".strip().upper()
+        full_name = clean_name(f"{first_name} {last_name}")
         today = datetime.now()
 
-        print(f"📤 NAME: {full_name}")
+        print(f"📤 CLEANED NAME: '{full_name}'")
         print(f"📅 TODAY: {today}")
 
         url = "https://docs.google.com/spreadsheets/d/1tEtYSJnIWKn3uScBhn1e_chiEPLt3jCHF1O9XVvjhnM/edit"
@@ -111,15 +118,14 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         print("✅ Spreadsheet opened")
 
-        worksheets = spreadsheet.worksheets()
+        print("📄 AVAILABLE SHEETS:")
+        for ws in spreadsheet.worksheets():
+            print(f"👉 '{ws.title}'")
 
-        print("📄 SHEETS:")
-        for ws in worksheets:
-            print(" -", ws.title)
+        # 🔥 SAFEST OPTION (no name issues)
+        target_sheet = spreadsheet.get_worksheet(0)
 
-        target_sheet = spreadsheet.worksheet("U11 Attendance")
-
-        print(f"📍 USING SHEET: {target_sheet.title}")
+        print(f"📍 USING SHEET: '{target_sheet.title}'")
 
         data = target_sheet.get_all_values()
 
@@ -131,19 +137,29 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         print("📊 HEADER:", header)
 
+        print("\n📋 ALL PLAYER NAMES FROM SHEET:")
+        for i, row in enumerate(data[1:], start=2):
+            if row:
+                print(f"{i}: '{row[0]}'")
+
         # -------------------------------
         # FIND OR CREATE PLAYER
         # -------------------------------
         player_row = None
 
         for i, row in enumerate(data[1:], start=2):
-            if len(row) > 0 and row[0].strip().upper() == full_name:
-                player_row = i
-                print(f"✅ Found player at row {i}")
-                break
+            if len(row) > 0:
+                sheet_name = clean_name(row[0])
+
+                print(f"🔍 Comparing '{sheet_name}' vs '{full_name}'")
+
+                if sheet_name == full_name:
+                    player_row = i
+                    print(f"✅ Found player at row {i}")
+                    break
 
         if not player_row:
-            print("⚠️ Adding new player")
+            print("⚠️ Player not found → ADDING NEW")
 
             new_row = [full_name] + [""] * (len(header) - 1)
             target_sheet.append_row(new_row)
@@ -155,17 +171,17 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         # FIND TODAY COLUMN
         # -------------------------------
         today_str = today.strftime("%d-%b")
-        print("📅 Looking for:", today_str)
+        print("📅 Looking for column:", today_str)
 
         if today_str not in header:
-            print("❌ DATE COLUMN NOT FOUND → ADDING")
+            print("➕ Adding new date column")
 
             target_sheet.update_cell(1, len(header) + 1, today_str)
             header.append(today_str)
 
         col_index = header.index(today_str) + 1
 
-        print(f"📍 Row: {player_row}, Col: {col_index}")
+        print(f"📍 FINAL POSITION → Row: {player_row}, Col: {col_index}")
 
         # -------------------------------
         # WRITE VALUE
@@ -174,7 +190,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         target_sheet.update_cell(player_row, col_index, "P")
 
-        print("✅ SUCCESS")
+        print("✅ SUCCESS — ATTENDANCE MARKED")
 
     except Exception as e:
         print("❌ FINAL ERROR:", str(e))

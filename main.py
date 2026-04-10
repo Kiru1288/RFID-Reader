@@ -133,7 +133,7 @@ def clean_name(name):
 @app.get("/sheet-test")
 def sheet_test():
     try:
-        SHEET_URL = "https://docs.google.com/spreadsheets/d/1-14fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-O/edit"
+        SHEET_URL = "https://docs.google.com/spreadsheets/d/1-l4fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-Q/edit?gid=0#gid=0"
 
         print("🧪 TESTING SHEET ACCESS...")
 

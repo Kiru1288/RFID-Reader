@@ -82,15 +82,7 @@ try:
 
     if creds_json:
         creds_dict = json.loads(creds_json)
-        print("🔑 SERVICE ACCOUNT:", creds_dict.get("client_email"))
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-
-    elif os.path.exists("credentials.json"):
-        with open("credentials.json") as f:
-            creds_dict = json.load(f)
-        print("🔑 SERVICE ACCOUNT:", creds_dict.get("client_email"))
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
         client = gspread.authorize(creds)
 
     print("✅ GOOGLE SHEETS CONNECTED")
@@ -99,30 +91,15 @@ except Exception as e:
     print("❌ GOOGLE ERROR:", str(e))
 
 # -------------------------------
-# 🔥 FIX: AUTO EXPAND SHEET
-# -------------------------------
-def ensure_sheet_size(sheet, min_cols=200, min_rows=1000):
-    current_cols = sheet.col_count
-    current_rows = sheet.row_count
-
-    if current_cols < min_cols:
-        print(f"📏 Expanding columns → {min_cols}")
-        sheet.add_cols(min_cols - current_cols)
-
-    if current_rows < min_rows:
-        print(f"📏 Expanding rows → {min_rows}")
-        sheet.add_rows(min_rows - current_rows)
-
-# -------------------------------
 # HELPERS
 # -------------------------------
 def clean_name(name):
     return " ".join(name.strip().upper().split())
 
 # -------------------------------
-# LOG TO SHEET (FULL FIXED)
+# LOG TO SHEET (NEW LOGIC)
 # -------------------------------
-def log_to_sheet(first_name, last_name, phone, rfid):
+def log_to_sheet(first_name, last_name):
     print("\n================ LOGGING START ================")
 
     if not client:
@@ -136,31 +113,18 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         spreadsheet = client.open_by_key(SHEET_ID)
         sheet = spreadsheet.get_worksheet(0)
 
-        # 🔥 FIX: ALWAYS ENSURE SIZE BEFORE ANYTHING
-        ensure_sheet_size(sheet)
-
         data = sheet.get_all_values()
 
         if not data:
-            sheet.append_row(["Player Name", today])
-            data = sheet.get_all_values()
+            print("❌ NO HEADER FOUND")
+            return
 
         header = data[0]
 
-        # -------------------------
-        # ADD NEW DAY
-        # -------------------------
+        # ❌ DO NOT CREATE NEW DAY
         if today not in header:
-            print("➕ ADDING NEW DAY:", today)
-
-            col = len(header) + 1
-            sheet.update_cell(1, col, today)
-
-            # default everyone absent
-            for i in range(2, len(data) + 1):
-                sheet.update_cell(i, col, "A")
-
-            header.append(today)
+            print(f"⚠️ NOT A BASKETBALL DAY → {today}")
+            return
 
         col_index = header.index(today) + 1
 
@@ -173,24 +137,15 @@ def log_to_sheet(first_name, last_name, phone, rfid):
                 row_index = i
                 break
 
-        # -------------------------
-        # ADD NEW PLAYER
-        # -------------------------
+        # ❌ DO NOT ADD USER AGAIN
         if not row_index:
-            print("➕ ADDING NEW PLAYER:", full_name)
-
-            new_row = [full_name]
-
-            for _ in range(len(header) - 1):
-                new_row.append("A")
-
-            sheet.append_row(new_row)
-            row_index = len(data) + 1
+            print("⚠️ USER NOT IN SHEET (skipping)")
+            return
 
         # -------------------------
         # MARK PRESENT
         # -------------------------
-        print(f"✅ MARKING PRESENT → ROW {row_index}, COL {col_index}")
+        print(f"✅ CHECK-IN SUCCESS → {full_name}")
         sheet.update_cell(row_index, col_index, "P")
 
     except Exception as e:
@@ -211,7 +166,7 @@ class ScanRequest(BaseModel):
     rfid_uid: str
 
 # -------------------------------
-# REGISTER
+# REGISTER (NO SHEET WRITE)
 # -------------------------------
 @app.post("/register")
 def register_student(data: StudentCreate):
@@ -228,33 +183,7 @@ def register_student(data: StudentCreate):
 
         conn.commit()
 
-        # add to sheet as ABSENT
-        if client:
-            full_name = clean_name(f"{data.first_name} {data.last_name}")
-
-            spreadsheet = client.open_by_key(SHEET_ID)
-            sheet = spreadsheet.get_worksheet(0)
-
-            ensure_sheet_size(sheet)
-
-            data_sheet = sheet.get_all_values()
-
-            exists = False
-            for row in data_sheet[1:]:
-                if row and clean_name(row[0]) == full_name:
-                    exists = True
-                    break
-
-            if not exists:
-                new_row = [full_name]
-
-                if data_sheet:
-                    for _ in range(len(data_sheet[0]) - 1):
-                        new_row.append("A")
-
-                sheet.append_row(new_row)
-
-                print("✅ USER ADDED AS ABSENT")
+        print("✅ USER SAVED TO DB ONLY")
 
         return {"success": True}
 
@@ -285,6 +214,7 @@ def scan_rfid(data: ScanRequest):
     if row:
         first_name, last_name, phone = row
 
+        # ✅ ALWAYS LOG IN DATABASE
         cur.execute("""
             INSERT INTO attendance (rfid_uid, timestamp)
             VALUES (%s, %s)
@@ -293,7 +223,10 @@ def scan_rfid(data: ScanRequest):
         conn.commit()
         conn.close()
 
-        log_to_sheet(first_name, last_name, phone, data.rfid_uid)
+        print("✅ DATABASE CHECK-IN SUCCESS")
+
+        # ✅ TRY SHEET (optional)
+        log_to_sheet(first_name, last_name)
 
         return {
             "found": True,

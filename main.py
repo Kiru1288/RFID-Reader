@@ -77,11 +77,14 @@ try:
 
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
-    if creds_json:
+   if creds_json:
         print("✅ FOUND GOOGLE_CREDENTIALS ENV")
-
+    
         creds_dict = json.loads(creds_json)
-
+    
+        # 🔥 ADD THIS LINE RIGHT HERE
+        print("🔑 SERVICE ACCOUNT EMAIL:", creds_dict.get("client_email"))
+    
         scope = [
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive"

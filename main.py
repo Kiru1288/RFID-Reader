@@ -11,9 +11,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 app = FastAPI()
 
-# -------------------------------
-# STARTUP DEBUG
-# -------------------------------
 print("\n🔥🔥🔥 SERVER STARTED 🔥🔥🔥")
 
 # -------------------------------
@@ -102,24 +99,28 @@ except Exception as e:
     print("❌ GOOGLE ERROR:", str(e))
 
 # -------------------------------
+# 🔥 FIX: AUTO EXPAND SHEET
+# -------------------------------
+def ensure_sheet_size(sheet, min_cols=200, min_rows=1000):
+    current_cols = sheet.col_count
+    current_rows = sheet.row_count
+
+    if current_cols < min_cols:
+        print(f"📏 Expanding columns → {min_cols}")
+        sheet.add_cols(min_cols - current_cols)
+
+    if current_rows < min_rows:
+        print(f"📏 Expanding rows → {min_rows}")
+        sheet.add_rows(min_rows - current_rows)
+
+# -------------------------------
 # HELPERS
 # -------------------------------
 def clean_name(name):
     return " ".join(name.strip().upper().split())
 
 # -------------------------------
-# TEST ROUTE
-# -------------------------------
-@app.get("/sheet-test")
-def sheet_test():
-    try:
-        spreadsheet = client.open_by_key(SHEET_ID)
-        return {"status": "success", "title": spreadsheet.title}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-# -------------------------------
-# LOG TO SHEET (FIXED SYSTEM)
+# LOG TO SHEET (FULL FIXED)
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     print("\n================ LOGGING START ================")
@@ -135,11 +136,11 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         spreadsheet = client.open_by_key(SHEET_ID)
         sheet = spreadsheet.get_worksheet(0)
 
+        # 🔥 FIX: ALWAYS ENSURE SIZE BEFORE ANYTHING
+        ensure_sheet_size(sheet)
+
         data = sheet.get_all_values()
 
-        # -------------------------
-        # CREATE HEADER IF EMPTY
-        # -------------------------
         if not data:
             sheet.append_row(["Player Name", today])
             data = sheet.get_all_values()
@@ -147,7 +148,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         header = data[0]
 
         # -------------------------
-        # ADD DATE COLUMN IF MISSING
+        # ADD NEW DAY
         # -------------------------
         if today not in header:
             print("➕ ADDING NEW DAY:", today)
@@ -155,7 +156,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
             col = len(header) + 1
             sheet.update_cell(1, col, today)
 
-            # 🔥 SET EVERYONE TO "A"
+            # default everyone absent
             for i in range(2, len(data) + 1):
                 sheet.update_cell(i, col, "A")
 
@@ -173,14 +174,13 @@ def log_to_sheet(first_name, last_name, phone, rfid):
                 break
 
         # -------------------------
-        # ADD PLAYER IF NEW
+        # ADD NEW PLAYER
         # -------------------------
         if not row_index:
             print("➕ ADDING NEW PLAYER:", full_name)
 
             new_row = [full_name]
 
-            # 🔥 Fill ALL past days as "A"
             for _ in range(len(header) - 1):
                 new_row.append("A")
 
@@ -211,7 +211,7 @@ class ScanRequest(BaseModel):
     rfid_uid: str
 
 # -------------------------------
-# REGISTER (FIXED)
+# REGISTER
 # -------------------------------
 @app.post("/register")
 def register_student(data: StudentCreate):
@@ -228,39 +228,33 @@ def register_student(data: StudentCreate):
 
         conn.commit()
 
-        # 🔥 ONLY ADD NAME (NO P/A HERE)
+        # add to sheet as ABSENT
         if client:
-            try:
-                full_name = clean_name(f"{data.first_name} {data.last_name}")
+            full_name = clean_name(f"{data.first_name} {data.last_name}")
 
-                spreadsheet = client.open_by_key(SHEET_ID)
-                sheet = spreadsheet.get_worksheet(0)
+            spreadsheet = client.open_by_key(SHEET_ID)
+            sheet = spreadsheet.get_worksheet(0)
 
-                data_sheet = sheet.get_all_values()
+            ensure_sheet_size(sheet)
 
-                # prevent duplicate
-                exists = False
-                for row in data_sheet[1:]:
-                    if row and clean_name(row[0]) == full_name:
-                        exists = True
-                        break
+            data_sheet = sheet.get_all_values()
 
-                if not exists:
-                    print("📄 ADDING NEW USER:", full_name)
+            exists = False
+            for row in data_sheet[1:]:
+                if row and clean_name(row[0]) == full_name:
+                    exists = True
+                    break
 
-                    new_row = [full_name]
+            if not exists:
+                new_row = [full_name]
 
-                    # fill all existing days with "A"
-                    if data_sheet:
-                        for _ in range(len(data_sheet[0]) - 1):
-                            new_row.append("A")
+                if data_sheet:
+                    for _ in range(len(data_sheet[0]) - 1):
+                        new_row.append("A")
 
-                    sheet.append_row(new_row)
+                sheet.append_row(new_row)
 
-                    print("✅ USER ADDED AS ABSENT")
-
-            except Exception as e:
-                print("❌ SHEET REGISTER ERROR:", str(e))
+                print("✅ USER ADDED AS ABSENT")
 
         return {"success": True}
 

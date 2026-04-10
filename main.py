@@ -43,10 +43,9 @@ app.add_middleware(
 )
 
 # -------------------------------
-# DATABASE
+# DATABASE (NO DUPLICATE LOGIC)
 # -------------------------------
 def get_db():
-    logger.info("📡 Connecting to DB...")
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
@@ -67,21 +66,15 @@ def init_db():
     CREATE TABLE IF NOT EXISTS attendance (
         id SERIAL PRIMARY KEY,
         rfid_uid TEXT NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        date TEXT
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
-    """)
-
-    cur.execute("""
-    CREATE UNIQUE INDEX IF NOT EXISTS unique_daily_scan
-    ON attendance (rfid_uid, date)
     """)
 
     conn.commit()
     cur.close()
     conn.close()
 
-    logger.info("✅ DB READY")
+    logger.info("✅ DB READY (NO DUPLICATE SYSTEM)")
 
 init_db()
 
@@ -91,8 +84,6 @@ init_db()
 client = None
 
 try:
-    logger.info("🌍 Setting up Google Sheets...")
-
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
     if creds_json:
@@ -104,8 +95,6 @@ try:
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         logger.info("✅ GOOGLE SHEETS CONNECTED")
-    else:
-        logger.warning("⚠️ GOOGLE_CREDENTIALS missing")
 
 except Exception as e:
     logger.error(f"❌ GOOGLE ERROR: {str(e)}")
@@ -125,7 +114,7 @@ class ScanRequest(BaseModel):
 # -------------------------------
 # HELPERS
 # -------------------------------
-def valid_rfid(rfid: str) -> bool:
+def valid_rfid(rfid: str):
     return bool(re.fullmatch(r"\d{6,30}", rfid.strip()))
 
 def today_label():
@@ -136,27 +125,39 @@ def get_sheet():
         return None
     return client.open_by_key(SHEET_ID).get_worksheet(0)
 
-# 🔥 CRITICAL FIX: RETURN TRUE/FALSE
-def log_to_sheet(first_name, last_name):
+# 🔥 CHECK SHEET FOR EXISTING "P"
+def check_already_in_sheet(first_name, last_name):
     try:
-        if not client:
-            logger.error("❌ NO SHEET CLIENT")
-            return False
-
         sheet = get_sheet()
-        if not sheet:
-            logger.error("❌ NO SHEET FOUND")
-            return False
-
         data = sheet.get_all_values()
         header = data[0]
         today = today_label()
 
-        logger.info(f"📅 TODAY: {today}")
-        logger.info(f"📊 HEADERS: {header}")
+        if today not in header:
+            return False
+
+        col = header.index(today)
+        full_name = f"{first_name} {last_name}".strip().upper()
+
+        for row in data[1:]:
+            if row and row[0].strip().upper() == full_name:
+                return row[col] == "P"
+
+        return False
+
+    except:
+        return False
+
+# 🔥 WRITE TO SHEET
+def write_to_sheet(first_name, last_name):
+    try:
+        sheet = get_sheet()
+        data = sheet.get_all_values()
+        header = data[0]
+        today = today_label()
 
         if today not in header:
-            logger.error("❌ DATE COLUMN NOT FOUND")
+            logger.error("❌ DATE NOT FOUND")
             return False
 
         col = header.index(today) + 1
@@ -168,7 +169,7 @@ def log_to_sheet(first_name, last_name):
                 logger.info(f"✅ SHEET UPDATED row={i}, col={col}")
                 return True
 
-        logger.error("❌ NAME NOT FOUND IN SHEET")
+        logger.error("❌ NAME NOT FOUND")
         return False
 
     except Exception as e:
@@ -176,10 +177,10 @@ def log_to_sheet(first_name, last_name):
         return False
 
 # -------------------------------
-# CORE LOGIC (FIXED)
+# CORE LOGIC (SHEET = SOURCE OF TRUTH)
 # -------------------------------
 def process_check_in(rfid_uid: str):
-    logger.info(f"📡 SCAN HIT: {rfid_uid}")
+    logger.info(f"📡 SCAN: {rfid_uid}")
 
     if not valid_rfid(rfid_uid):
         return {"status": "invalid"}
@@ -194,29 +195,23 @@ def process_check_in(rfid_uid: str):
         if not student:
             return {"status": "not_found"}
 
-        today = datetime.now().date().isoformat()
+        # 🔥 CHECK SHEET INSTEAD OF DB
+        already = check_already_in_sheet(student["first_name"], student["last_name"])
 
-        # CHECK DB FIRST
-        cur.execute("""
-        SELECT 1 FROM attendance
-        WHERE rfid_uid=%s AND date=%s
-        """, (rfid_uid, today))
-
-        if cur.fetchone():
+        if already:
             return {"status": "already_checked"}
 
-        # 🔥 FIX: UPDATE SHEET FIRST
-        sheet_success = log_to_sheet(student["first_name"], student["last_name"])
+        # WRITE TO SHEET
+        success = write_to_sheet(student["first_name"], student["last_name"])
 
-        if not sheet_success:
-            logger.error("❌ BLOCKED: SHEET FAILED → NOT SAVING TO DB")
+        if not success:
             return {"status": "sheet_failed"}
 
-        # ONLY SAVE IF SHEET WORKED
+        # OPTIONAL DB LOG (NO BLOCKING)
         cur.execute("""
-        INSERT INTO attendance (rfid_uid, timestamp, date)
-        VALUES (%s, %s, %s)
-        """, (rfid_uid, datetime.now(), today))
+        INSERT INTO attendance (rfid_uid, timestamp)
+        VALUES (%s, %s)
+        """, (rfid_uid, datetime.now()))
 
         conn.commit()
 
@@ -236,33 +231,28 @@ def process_check_in(rfid_uid: str):
 # -------------------------------
 # ROUTES
 # -------------------------------
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+@app.post("/scan")
+def scan(data: ScanRequest):
+    return process_check_in(data.rfid_uid)
 
 @app.post("/register")
 def register(data: StudentCreate):
     conn = get_db()
     cur = conn.cursor()
 
-    try:
-        cur.execute("""
-        INSERT INTO students (rfid_uid, first_name, last_name, phone)
-        VALUES (%s, %s, %s, %s)
-        """, (data.rfid_uid, data.first_name, data.last_name, data.phone))
+    cur.execute("""
+    INSERT INTO students (rfid_uid, first_name, last_name, phone)
+    VALUES (%s, %s, %s, %s)
+    """, (data.rfid_uid, data.first_name, data.last_name, data.phone))
 
-        conn.commit()
-        return {"success": True}
+    conn.commit()
+    conn.close()
 
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    return {"success": True}
 
-    finally:
-        conn.close()
-
-@app.post("/scan")
-def scan(data: ScanRequest):
-    return process_check_in(data.rfid_uid)
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 # -------------------------------
 # FRONTEND

@@ -119,7 +119,7 @@ def sheet_test():
         return {"status": "error", "error": str(e)}
 
 # -------------------------------
-# LOG TO SHEET
+# LOG TO SHEET (FIXED SYSTEM)
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     print("\n================ LOGGING START ================")
@@ -137,33 +137,61 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         data = sheet.get_all_values()
 
+        # -------------------------
+        # CREATE HEADER IF EMPTY
+        # -------------------------
         if not data:
             sheet.append_row(["Player Name", today])
             data = sheet.get_all_values()
 
         header = data[0]
 
+        # -------------------------
+        # ADD DATE COLUMN IF MISSING
+        # -------------------------
+        if today not in header:
+            print("➕ ADDING NEW DAY:", today)
+
+            col = len(header) + 1
+            sheet.update_cell(1, col, today)
+
+            # 🔥 SET EVERYONE TO "A"
+            for i in range(2, len(data) + 1):
+                sheet.update_cell(i, col, "A")
+
+            header.append(today)
+
+        col_index = header.index(today) + 1
+
+        # -------------------------
         # FIND PLAYER
+        # -------------------------
         row_index = None
         for i, row in enumerate(data[1:], start=2):
             if row and clean_name(row[0]) == full_name:
                 row_index = i
                 break
 
+        # -------------------------
+        # ADD PLAYER IF NEW
+        # -------------------------
         if not row_index:
-            sheet.append_row([full_name])
+            print("➕ ADDING NEW PLAYER:", full_name)
+
+            new_row = [full_name]
+
+            # 🔥 Fill ALL past days as "A"
+            for _ in range(len(header) - 1):
+                new_row.append("A")
+
+            sheet.append_row(new_row)
             row_index = len(data) + 1
 
-        # DATE COLUMN
-        if today not in header:
-            sheet.update_cell(1, len(header) + 1, today)
-            header.append(today)
-
-        col_index = header.index(today) + 1
-
+        # -------------------------
+        # MARK PRESENT
+        # -------------------------
+        print(f"✅ MARKING PRESENT → ROW {row_index}, COL {col_index}")
         sheet.update_cell(row_index, col_index, "P")
-
-        print("✅ ATTENDANCE MARKED")
 
     except Exception as e:
         print("❌ SHEET ERROR:", str(e))
@@ -183,7 +211,7 @@ class ScanRequest(BaseModel):
     rfid_uid: str
 
 # -------------------------------
-# REGISTER (🔥 UPDATED)
+# REGISTER (FIXED)
 # -------------------------------
 @app.post("/register")
 def register_student(data: StudentCreate):
@@ -193,7 +221,6 @@ def register_student(data: StudentCreate):
     cur = conn.cursor()
 
     try:
-        # SAVE TO DB
         cur.execute("""
             INSERT INTO students (rfid_uid, first_name, last_name, phone)
             VALUES (%s, %s, %s, %s)
@@ -201,7 +228,7 @@ def register_student(data: StudentCreate):
 
         conn.commit()
 
-        # 🔥 ADD TO SHEET WITH DEFAULT VALUES
+        # 🔥 ONLY ADD NAME (NO P/A HERE)
         if client:
             try:
                 full_name = clean_name(f"{data.first_name} {data.last_name}")
@@ -209,11 +236,28 @@ def register_student(data: StudentCreate):
                 spreadsheet = client.open_by_key(SHEET_ID)
                 sheet = spreadsheet.get_worksheet(0)
 
-                print("📄 ADDING USER TO SHEET:", full_name)
+                data_sheet = sheet.get_all_values()
 
-                sheet.append_row([full_name, "P", "A"])
+                # prevent duplicate
+                exists = False
+                for row in data_sheet[1:]:
+                    if row and clean_name(row[0]) == full_name:
+                        exists = True
+                        break
 
-                print("✅ USER ADDED WITH P/A")
+                if not exists:
+                    print("📄 ADDING NEW USER:", full_name)
+
+                    new_row = [full_name]
+
+                    # fill all existing days with "A"
+                    if data_sheet:
+                        for _ in range(len(data_sheet[0]) - 1):
+                            new_row.append("A")
+
+                    sheet.append_row(new_row)
+
+                    print("✅ USER ADDED AS ABSENT")
 
             except Exception as e:
                 print("❌ SHEET REGISTER ERROR:", str(e))

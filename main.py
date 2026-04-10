@@ -58,7 +58,7 @@ def init_db():
 init_db()
 
 # -------------------------------
-# GOOGLE SHEETS
+# GOOGLE SHEETS SETUP
 # -------------------------------
 client = None
 
@@ -89,14 +89,14 @@ except Exception as e:
 
 
 # -------------------------------
-# 🔥 NAME CLEANER (CRITICAL FIX)
+# NAME CLEANER (CRITICAL)
 # -------------------------------
 def clean_name(name):
     return " ".join(name.strip().upper().split())
 
 
 # -------------------------------
-# 🔥 ULTRA DEBUG LOGGING
+# LOG TO GOOGLE SHEET (FINAL)
 # -------------------------------
 def log_to_sheet(first_name, last_name, phone, rfid):
     print("\n================ DEBUG START ================")
@@ -113,40 +113,33 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         print(f"📤 CLEANED NAME: '{full_name}'")
         print(f"📅 TODAY: {today}")
 
+        # 🔥 YOUR WORKING SHEET URL
         url = "https://docs.google.com/spreadsheets/d/1tEtYSJnIWKn3uScBhn1e_chiEPLt3jCHF1O9XVvjhnM/edit"
         spreadsheet = client.open_by_url(url)
 
         print("✅ Spreadsheet opened")
 
-        print("📄 AVAILABLE SHEETS:")
-        for ws in spreadsheet.worksheets():
-            print(f"👉 '{ws.title}'")
-
-        # 🔥 SAFEST OPTION (no name issues)
-        target_sheet = spreadsheet.get_worksheet(0)
+        # 🔥 FORCE CORRECT TAB
+        target_sheet = spreadsheet.worksheet("Sheet1")
 
         print(f"📍 USING SHEET: '{target_sheet.title}'")
 
         data = target_sheet.get_all_values()
 
-        if not data:
-            print("❌ Sheet is empty")
+        if not data or len(data) < 1:
+            print("❌ Sheet empty or invalid")
             return
 
-        header = data[0]
+        header = [h.strip() for h in data[0]]
 
         print("📊 HEADER:", header)
 
-        print("\n📋 ALL PLAYER NAMES FROM SHEET:")
-        for i, row in enumerate(data[1:], start=2):
-            if row:
-                print(f"{i}: '{row[0]}'")
-
         # -------------------------------
-        # FIND OR CREATE PLAYER
+        # FIND PLAYER
         # -------------------------------
         player_row = None
 
+        print("\n📋 CHECKING PLAYERS:")
         for i, row in enumerate(data[1:], start=2):
             if len(row) > 0:
                 sheet_name = clean_name(row[0])
@@ -158,8 +151,11 @@ def log_to_sheet(first_name, last_name, phone, rfid):
                     print(f"✅ Found player at row {i}")
                     break
 
+        # -------------------------------
+        # ADD PLAYER IF NOT FOUND
+        # -------------------------------
         if not player_row:
-            print("⚠️ Player not found → ADDING NEW")
+            print("⚠️ Player not found → ADDING")
 
             new_row = [full_name] + [""] * (len(header) - 1)
             target_sheet.append_row(new_row)
@@ -184,7 +180,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         print(f"📍 FINAL POSITION → Row: {player_row}, Col: {col_index}")
 
         # -------------------------------
-        # WRITE VALUE
+        # WRITE ATTENDANCE
         # -------------------------------
         print("✏️ Writing 'P'...")
 

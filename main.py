@@ -77,14 +77,14 @@ try:
 
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
-   if creds_json:
+    if creds_json:
         print("✅ FOUND GOOGLE_CREDENTIALS ENV")
-    
+
         creds_dict = json.loads(creds_json)
-    
-        # 🔥 ADD THIS LINE RIGHT HERE
-        print("🔑 SERVICE ACCOUNT EMAIL:", creds_dict.get("client_email"))
-    
+
+        # 🔥 DEBUG: SHOW SERVICE ACCOUNT EMAIL
+        print("🔑 SERVICE ACCOUNT EMAIL (ENV):", creds_dict.get("client_email"))
+
         scope = [
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive"
@@ -97,6 +97,12 @@ try:
 
     elif os.path.exists("credentials.json"):
         print("⚠️ USING LOCAL credentials.json")
+
+        with open("credentials.json") as f:
+            creds_dict = json.load(f)
+
+        # 🔥 DEBUG: SHOW SERVICE ACCOUNT EMAIL
+        print("🔑 SERVICE ACCOUNT EMAIL (LOCAL):", creds_dict.get("client_email"))
 
         scope = [
             "https://spreadsheets.google.com/feeds",
@@ -113,7 +119,6 @@ try:
 
 except Exception as e:
     print("❌ GOOGLE ERROR:", str(e))
-
 
 # -------------------------------
 # NAME CLEANER

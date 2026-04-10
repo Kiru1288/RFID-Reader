@@ -71,8 +71,6 @@ init_db()
 # GOOGLE SHEETS
 # -------------------------------
 client = None
-
-# 🔥 YOUR REAL SHEET ID (FINAL FIX)
 SHEET_ID = "1-l4fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-Q"
 
 try:
@@ -86,27 +84,17 @@ try:
     ]
 
     if creds_json:
-        print("✅ FOUND GOOGLE_CREDENTIALS ENV")
-
         creds_dict = json.loads(creds_json)
         print("🔑 SERVICE ACCOUNT:", creds_dict.get("client_email"))
-
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
 
     elif os.path.exists("credentials.json"):
-        print("⚠️ USING LOCAL credentials.json")
-
         with open("credentials.json") as f:
             creds_dict = json.load(f)
-
         print("🔑 SERVICE ACCOUNT:", creds_dict.get("client_email"))
-
         creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
         client = gspread.authorize(creds)
-
-    else:
-        print("❌ NO GOOGLE CREDENTIALS FOUND")
 
     print("✅ GOOGLE SHEETS CONNECTED")
 
@@ -125,16 +113,9 @@ def clean_name(name):
 @app.get("/sheet-test")
 def sheet_test():
     try:
-        print("🧪 TESTING SHEET ACCESS...")
-
         spreadsheet = client.open_by_key(SHEET_ID)
-
-        print("✅ ACCESS SUCCESS:", spreadsheet.title)
-
         return {"status": "success", "title": spreadsheet.title}
-
     except Exception as e:
-        print("❌ ACCESS FAILED:", str(e))
         return {"status": "error", "error": str(e)}
 
 # -------------------------------
@@ -151,12 +132,7 @@ def log_to_sheet(first_name, last_name, phone, rfid):
         full_name = clean_name(f"{first_name} {last_name}")
         today = datetime.now().strftime("%d-%b")
 
-        print("👤 NAME:", full_name)
-        print("📅 DATE:", today)
-
         spreadsheet = client.open_by_key(SHEET_ID)
-        print("✅ OPENED:", spreadsheet.title)
-
         sheet = spreadsheet.get_worksheet(0)
 
         data = sheet.get_all_values()
@@ -185,11 +161,9 @@ def log_to_sheet(first_name, last_name, phone, rfid):
 
         col_index = header.index(today) + 1
 
-        print(f"📍 WRITING → ROW {row_index}, COL {col_index}")
-
         sheet.update_cell(row_index, col_index, "P")
 
-        print("✅ SUCCESS")
+        print("✅ ATTENDANCE MARKED")
 
     except Exception as e:
         print("❌ SHEET ERROR:", str(e))
@@ -209,20 +183,41 @@ class ScanRequest(BaseModel):
     rfid_uid: str
 
 # -------------------------------
-# REGISTER
+# REGISTER (🔥 UPDATED)
 # -------------------------------
 @app.post("/register")
 def register_student(data: StudentCreate):
+    print("📝 REGISTER:", data)
+
     conn = get_db()
     cur = conn.cursor()
 
     try:
+        # SAVE TO DB
         cur.execute("""
             INSERT INTO students (rfid_uid, first_name, last_name, phone)
             VALUES (%s, %s, %s, %s)
         """, (data.rfid_uid, data.first_name, data.last_name, data.phone))
 
         conn.commit()
+
+        # 🔥 ADD TO SHEET WITH DEFAULT VALUES
+        if client:
+            try:
+                full_name = clean_name(f"{data.first_name} {data.last_name}")
+
+                spreadsheet = client.open_by_key(SHEET_ID)
+                sheet = spreadsheet.get_worksheet(0)
+
+                print("📄 ADDING USER TO SHEET:", full_name)
+
+                sheet.append_row([full_name, "P", "A"])
+
+                print("✅ USER ADDED WITH P/A")
+
+            except Exception as e:
+                print("❌ SHEET REGISTER ERROR:", str(e))
+
         return {"success": True}
 
     except Exception as e:

@@ -122,6 +122,22 @@ def clean_name(name):
 # -------------------------------
 # LOG TO SHEET
 # -------------------------------
+@app.get("/sheet-test")
+def sheet_test():
+    try:
+        SHEET_URL = "https://docs.google.com/spreadsheets/d/1-14fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-O/edit"
+
+        print("🧪 TESTING SHEET ACCESS...")
+
+        spreadsheet = client.open_by_url(SHEET_URL)
+
+        print("✅ ACCESS SUCCESS:", spreadsheet.title)
+
+        return {"status": "success", "title": spreadsheet.title}
+
+    except Exception as e:
+        print("❌ ACCESS FAILED:", str(e))
+        return {"status": "error", "error": str(e)}
 def log_to_sheet(first_name, last_name, phone, rfid):
     print("\n================ LOGGING START ================")
 

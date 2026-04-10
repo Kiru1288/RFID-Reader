@@ -30,7 +30,6 @@ logger.info("🔥🔥🔥 SERVER STARTED 🔥🔥🔥")
 # -------------------------------
 DATABASE_URL = os.getenv("DATABASE_URL")
 SHEET_ID = "1-l4fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-Q"
-TEST_MODE = True
 
 # -------------------------------
 # CORS
@@ -54,7 +53,7 @@ def init_db():
     conn = get_db()
     cur = conn.cursor()
 
-    # STUDENTS TABLE
+    # STUDENTS
     cur.execute("""
     CREATE TABLE IF NOT EXISTS students (
         id SERIAL PRIMARY KEY,
@@ -65,7 +64,7 @@ def init_db():
     )
     """)
 
-    # ATTENDANCE TABLE
+    # ATTENDANCE
     cur.execute("""
     CREATE TABLE IF NOT EXISTS attendance (
         id SERIAL PRIMARY KEY,
@@ -79,8 +78,7 @@ def init_db():
     DO $$
     BEGIN
         IF NOT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
+            SELECT 1 FROM information_schema.columns
             WHERE table_name='attendance' AND column_name='date'
         ) THEN
             ALTER TABLE attendance ADD COLUMN date TEXT;
@@ -88,14 +86,23 @@ def init_db():
     END$$;
     """)
 
-    # SAFE BACKFILL (FIXED — NO TO_CHAR ERROR)
+    # BACKFILL DATE (SAFE FIX)
     cur.execute("""
     UPDATE attendance
-    SET date = (timestamp::timestamp)::date::text
+    SET date = (timestamp::date)::text
     WHERE date IS NULL;
     """)
 
-    # UNIQUE INDEX
+    # 🔥 REMOVE DUPLICATES (CRITICAL FIX)
+    cur.execute("""
+    DELETE FROM attendance a
+    USING attendance b
+    WHERE a.id < b.id
+      AND a.rfid_uid = b.rfid_uid
+      AND a.date = b.date;
+    """)
+
+    # CREATE UNIQUE INDEX
     cur.execute("""
     CREATE UNIQUE INDEX IF NOT EXISTS unique_daily_scan
     ON attendance (rfid_uid, date)
@@ -105,7 +112,7 @@ def init_db():
     cur.close()
     conn.close()
 
-    logger.info("✅ DB READY (FULLY FIXED)")
+    logger.info("✅ DB READY (FULLY FIXED + CLEANED)")
 
 init_db()
 
@@ -119,21 +126,19 @@ try:
 
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
 
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-
     if creds_json:
         creds_dict = json.loads(creds_json)
+        scope = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive"
+        ]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         logger.info("✅ GOOGLE SHEETS CONNECTED")
     else:
-        logger.warning("⚠️ GOOGLE_CREDENTIALS not found")
+        logger.warning("⚠️ GOOGLE_CREDENTIALS missing")
 
 except Exception as e:
-    client = None
     logger.error(f"❌ GOOGLE ERROR: {str(e)}")
 
 # -------------------------------
@@ -151,9 +156,6 @@ class ScanRequest(BaseModel):
 # -------------------------------
 # HELPERS
 # -------------------------------
-def clean_name(name: str) -> str:
-    return " ".join(name.strip().upper().split())
-
 def valid_rfid(rfid: str) -> bool:
     return bool(re.fullmatch(r"\d{6,30}", rfid.strip()))
 
@@ -168,32 +170,29 @@ def get_sheet():
 def log_to_sheet(first_name, last_name):
     try:
         if not client:
-            return {"sheet_logged": False}
+            return
 
         sheet = get_sheet()
         if not sheet:
-            return {"sheet_logged": False}
+            return
 
         data = sheet.get_all_values()
         header = data[0]
         today = today_label()
 
         if today not in header:
-            return {"sheet_logged": False}
+            return
 
         col = header.index(today) + 1
-        full_name = clean_name(f"{first_name} {last_name}")
+        full_name = f"{first_name} {last_name}".strip().upper()
 
         for i, row in enumerate(data[1:], start=2):
-            if clean_name(row[0]) == full_name:
+            if row and row[0].strip().upper() == full_name:
                 sheet.update_cell(i, col, "P")
-                return {"sheet_logged": True}
-
-        return {"sheet_logged": False}
+                return
 
     except Exception as e:
         logger.error(f"❌ SHEET ERROR: {str(e)}")
-        return {"sheet_logged": False}
 
 # -------------------------------
 # CORE LOGIC
@@ -214,19 +213,19 @@ def process_check_in(rfid_uid: str):
         if not student:
             return {"status": "not_found"}
 
-        first = student["first_name"]
-        last = student["last_name"]
-
+        # CHECK DUPLICATE
         cur.execute("""
         SELECT 1 FROM attendance
-        WHERE rfid_uid=%s AND DATE(timestamp)=CURRENT_DATE
-        """, (rfid_uid,))
+        WHERE rfid_uid=%s AND date = %s
+        """, (rfid_uid, datetime.now().date().isoformat()))
+
         if cur.fetchone():
             return {"status": "already_checked"}
 
         now = datetime.now()
-        today = now.date().isoformat()  # FIXED
+        today = now.date().isoformat()
 
+        # SAFE INSERT
         cur.execute("""
         INSERT INTO attendance (rfid_uid, timestamp, date)
         VALUES (%s, %s, %s)
@@ -234,12 +233,12 @@ def process_check_in(rfid_uid: str):
 
         conn.commit()
 
-        log_to_sheet(first, last)
+        log_to_sheet(student["first_name"], student["last_name"])
 
         return {
             "status": "success",
-            "first_name": first,
-            "last_name": last
+            "first_name": student["first_name"],
+            "last_name": student["last_name"]
         }
 
     except Exception as e:

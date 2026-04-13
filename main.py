@@ -43,7 +43,7 @@ app.add_middleware(
 )
 
 # -------------------------------
-# DATABASE (NO DUPLICATE LOGIC)
+# DATABASE
 # -------------------------------
 def get_db():
     return psycopg2.connect(DATABASE_URL)
@@ -74,7 +74,7 @@ def init_db():
     cur.close()
     conn.close()
 
-    logger.info("✅ DB READY (NO DUPLICATE SYSTEM)")
+    logger.info("✅ DB READY")
 
 init_db()
 
@@ -125,59 +125,102 @@ def get_sheet():
         return None
     return client.open_by_key(SHEET_ID).get_worksheet(0)
 
-# 🔥 CHECK SHEET FOR EXISTING "P"
+def normalize_name(name):
+    return re.sub(r"\s+", " ", name.strip().lower())
+
+# -------------------------------
+# CHECK IF ALREADY PRESENT
+# -------------------------------
 def check_already_in_sheet(first_name, last_name):
     try:
         sheet = get_sheet()
         data = sheet.get_all_values()
+
+        if not data:
+            return False
+
         header = data[0]
         today = today_label()
 
         if today not in header:
+            logger.error("❌ DATE COLUMN NOT FOUND")
             return False
 
         col = header.index(today)
-        full_name = f"{first_name} {last_name}".strip().upper()
+        target = normalize_name(f"{first_name} {last_name}")
 
         for row in data[1:]:
-            if row and row[0].strip().upper() == full_name:
-                return row[col] == "P"
+            if not row:
+                continue
+
+            sheet_name = normalize_name(row[0])
+
+            if sheet_name == target:
+                return len(row) > col and row[col] == "P"
 
         return False
 
-    except:
+    except Exception as e:
+        logger.error(f"❌ CHECK ERROR: {str(e)}")
         return False
 
-# 🔥 WRITE TO SHEET
+# -------------------------------
+# WRITE TO SHEET (FIXED)
+# -------------------------------
 def write_to_sheet(first_name, last_name):
     try:
         sheet = get_sheet()
         data = sheet.get_all_values()
+
+        if not data:
+            logger.error("❌ EMPTY SHEET")
+            return False
+
         header = data[0]
         today = today_label()
 
         if today not in header:
-            logger.error("❌ DATE NOT FOUND")
+            logger.error(f"❌ DATE '{today}' NOT FOUND")
             return False
 
         col = header.index(today) + 1
-        full_name = f"{first_name} {last_name}".strip().upper()
+        target = normalize_name(f"{first_name} {last_name}")
+
+        logger.info(f"🔍 LOOKING FOR: {target}")
 
         for i, row in enumerate(data[1:], start=2):
-            if row and row[0].strip().upper() == full_name:
+            if not row:
+                continue
+
+            sheet_name = normalize_name(row[0])
+
+            logger.info(f"➡️ Comparing with: {sheet_name}")
+
+            if sheet_name == target:
                 sheet.update_cell(i, col, "P")
-                logger.info(f"✅ SHEET UPDATED row={i}, col={col}")
+                logger.info(f"✅ UPDATED row={i}, col={col}")
                 return True
 
-        logger.error("❌ NAME NOT FOUND")
-        return False
+        # 🔥 AUTO ADD IF NOT FOUND
+        logger.warning("⚠️ NAME NOT FOUND → ADDING TO SHEET")
+
+        new_row = [f"{first_name} {last_name}"]
+        for _ in range(len(header) - 1):
+            new_row.append("")
+
+        new_row[col - 1] = "P"
+
+        sheet.append_row(new_row)
+        logger.info("✅ NEW ROW ADDED")
+
+        return True
 
     except Exception as e:
         logger.error(f"❌ SHEET ERROR: {str(e)}")
         return False
 
 # -------------------------------
-# CORE LOGIC (SHEET = SOURCE OF TRUTH)
+# CORE LOGIC
 # -------------------------------
 def process_check_in(rfid_uid: str):
     logger.info(f"📡 SCAN: {rfid_uid}")
@@ -193,21 +236,19 @@ def process_check_in(rfid_uid: str):
         student = cur.fetchone()
 
         if not student:
+            logger.error("❌ STUDENT NOT FOUND IN DB")
             return {"status": "not_found"}
 
-        # 🔥 CHECK SHEET INSTEAD OF DB
         already = check_already_in_sheet(student["first_name"], student["last_name"])
 
         if already:
             return {"status": "already_checked"}
 
-        # WRITE TO SHEET
         success = write_to_sheet(student["first_name"], student["last_name"])
 
         if not success:
             return {"status": "sheet_failed"}
 
-        # OPTIONAL DB LOG (NO BLOCKING)
         cur.execute("""
         INSERT INTO attendance (rfid_uid, timestamp)
         VALUES (%s, %s)

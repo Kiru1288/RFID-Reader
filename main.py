@@ -125,12 +125,15 @@ def get_sheet():
 def normalize_name(name):
     return re.sub(r"\s+", " ", name.strip().lower())
 
-# 🔥 NEW: FIND BEST DATE COLUMN (FIX)
+# 🔥 FIXED: SKIP COLUMN A
 def get_best_date_column(header):
     today = datetime.now()
     parsed = []
 
-    for i, col in enumerate(header):
+    # START FROM COLUMN 1 (skip names column)
+    for i in range(1, len(header)):
+        col = header[i]
+
         try:
             d = datetime.strptime(col.strip(), "%d-%b")
             d = d.replace(year=today.year)
@@ -141,15 +144,12 @@ def get_best_date_column(header):
     if not parsed:
         return None
 
-    # Sort newest → oldest
     parsed.sort(key=lambda x: x[1], reverse=True)
 
-    # Pick closest past date
     for idx, d in parsed:
         if d <= today:
             return idx
 
-    # fallback to first available
     return parsed[0][0]
 
 # -------------------------------
@@ -207,7 +207,7 @@ def write_to_sheet(first_name, last_name):
         col = col_index + 1
         target = normalize_name(f"{first_name} {last_name}")
 
-        logger.info(f"📅 USING COLUMN: {header[col_index]}")
+        logger.info(f"📅 USING COLUMN: {header[col_index]} (INDEX {col})")
         logger.info(f"🔍 LOOKING FOR: {target}")
 
         for i, row in enumerate(data[1:], start=2):
@@ -219,7 +219,7 @@ def write_to_sheet(first_name, last_name):
                 logger.info(f"✅ UPDATED row={i}, col={col}")
                 return True
 
-        # 🔥 AUTO ADD IF MISSING
+        # AUTO ADD
         logger.warning("⚠️ NAME NOT FOUND → ADDING")
 
         new_row = [f"{first_name} {last_name}"]

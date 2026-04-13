@@ -117,9 +117,6 @@ class ScanRequest(BaseModel):
 def valid_rfid(rfid: str):
     return bool(re.fullmatch(r"\d{6,30}", rfid.strip()))
 
-def today_label():
-    return datetime.now().strftime("%d-%b")
-
 def get_sheet():
     if not client:
         return None
@@ -128,8 +125,35 @@ def get_sheet():
 def normalize_name(name):
     return re.sub(r"\s+", " ", name.strip().lower())
 
+# 🔥 NEW: FIND BEST DATE COLUMN (FIX)
+def get_best_date_column(header):
+    today = datetime.now()
+    parsed = []
+
+    for i, col in enumerate(header):
+        try:
+            d = datetime.strptime(col.strip(), "%d-%b")
+            d = d.replace(year=today.year)
+            parsed.append((i, d))
+        except:
+            continue
+
+    if not parsed:
+        return None
+
+    # Sort newest → oldest
+    parsed.sort(key=lambda x: x[1], reverse=True)
+
+    # Pick closest past date
+    for idx, d in parsed:
+        if d <= today:
+            return idx
+
+    # fallback to first available
+    return parsed[0][0]
+
 # -------------------------------
-# CHECK IF ALREADY PRESENT
+# CHECK ALREADY PRESENT
 # -------------------------------
 def check_already_in_sheet(first_name, last_name):
     try:
@@ -140,22 +164,19 @@ def check_already_in_sheet(first_name, last_name):
             return False
 
         header = data[0]
-        today = today_label()
+        col = get_best_date_column(header)
 
-        if today not in header:
-            logger.error("❌ DATE COLUMN NOT FOUND")
+        if col is None:
+            logger.error("❌ NO VALID DATE COLUMNS")
             return False
 
-        col = header.index(today)
         target = normalize_name(f"{first_name} {last_name}")
 
         for row in data[1:]:
             if not row:
                 continue
 
-            sheet_name = normalize_name(row[0])
-
-            if sheet_name == target:
+            if normalize_name(row[0]) == target:
                 return len(row) > col and row[col] == "P"
 
         return False
@@ -165,7 +186,7 @@ def check_already_in_sheet(first_name, last_name):
         return False
 
 # -------------------------------
-# WRITE TO SHEET (FIXED)
+# WRITE TO SHEET
 # -------------------------------
 def write_to_sheet(first_name, last_name):
     try:
@@ -177,32 +198,29 @@ def write_to_sheet(first_name, last_name):
             return False
 
         header = data[0]
-        today = today_label()
+        col_index = get_best_date_column(header)
 
-        if today not in header:
-            logger.error(f"❌ DATE '{today}' NOT FOUND")
+        if col_index is None:
+            logger.error("❌ NO DATE COLUMN FOUND")
             return False
 
-        col = header.index(today) + 1
+        col = col_index + 1
         target = normalize_name(f"{first_name} {last_name}")
 
+        logger.info(f"📅 USING COLUMN: {header[col_index]}")
         logger.info(f"🔍 LOOKING FOR: {target}")
 
         for i, row in enumerate(data[1:], start=2):
             if not row:
                 continue
 
-            sheet_name = normalize_name(row[0])
-
-            logger.info(f"➡️ Comparing with: {sheet_name}")
-
-            if sheet_name == target:
+            if normalize_name(row[0]) == target:
                 sheet.update_cell(i, col, "P")
                 logger.info(f"✅ UPDATED row={i}, col={col}")
                 return True
 
-        # 🔥 AUTO ADD IF NOT FOUND
-        logger.warning("⚠️ NAME NOT FOUND → ADDING TO SHEET")
+        # 🔥 AUTO ADD IF MISSING
+        logger.warning("⚠️ NAME NOT FOUND → ADDING")
 
         new_row = [f"{first_name} {last_name}"]
         for _ in range(len(header) - 1):
@@ -236,7 +254,7 @@ def process_check_in(rfid_uid: str):
         student = cur.fetchone()
 
         if not student:
-            logger.error("❌ STUDENT NOT FOUND IN DB")
+            logger.error("❌ STUDENT NOT FOUND")
             return {"status": "not_found"}
 
         already = check_already_in_sheet(student["first_name"], student["last_name"])

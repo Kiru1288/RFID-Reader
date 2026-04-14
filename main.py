@@ -14,15 +14,9 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 app = FastAPI()
 
-# -------------------------------
-# LOGGING
-# -------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rfid")
 
-# -------------------------------
-# CONFIG
-# -------------------------------
 DATABASE_URL = os.getenv("DATABASE_URL")
 SHEET_ID = "1-l4fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-Q"
 
@@ -85,7 +79,7 @@ try:
         client = gspread.authorize(creds)
         logger.info("✅ Google Sheets Connected")
 except Exception as e:
-    logger.error(f"❌ Google Sheets Error: {e}")
+    logger.error(e)
 
 # -------------------------------
 # MODELS
@@ -108,14 +102,28 @@ def get_sheet():
 def normalize(name):
     return re.sub(r"\s+", " ", name.strip().lower())
 
-def get_today_column(header):
+# 🔥 AUTO CREATE DATE COLUMN
+def get_or_create_today_column(sheet):
+    data = sheet.get_all_values()
+
+    if not data:
+        return None
+
+    header = data[0]
     today_str = datetime.now().strftime("%d-%b")
 
-    for i in range(1, len(header)):  # skip column A
+    # CHECK IF EXISTS
+    for i in range(1, len(header)):
         if header[i].strip() == today_str:
             return i
 
-    return None
+    # CREATE NEW COLUMN
+    new_col_index = len(header) + 1
+    sheet.update_cell(1, new_col_index, today_str)
+
+    logger.info(f"🆕 CREATED NEW COLUMN: {today_str}")
+
+    return new_col_index - 1
 
 # -------------------------------
 # CHECK
@@ -123,17 +131,9 @@ def get_today_column(header):
 def already_checked(first, last):
     try:
         sheet = get_sheet()
+        col = get_or_create_today_column(sheet)
+
         data = sheet.get_all_values()
-
-        if not data:
-            return False
-
-        header = data[0]
-        col = get_today_column(header)
-
-        if col is None:
-            return False
-
         target = normalize(f"{first} {last}")
 
         for row in data[1:]:
@@ -143,7 +143,7 @@ def already_checked(first, last):
         return False
 
     except Exception as e:
-        logger.error(f"Check error: {e}")
+        logger.error(e)
         return False
 
 # -------------------------------
@@ -152,18 +152,10 @@ def already_checked(first, last):
 def write_sheet(first, last):
     try:
         sheet = get_sheet()
-        data = sheet.get_all_values()
-
-        if not data:
-            return False
-
-        header = data[0]
-        col_index = get_today_column(header)
-
-        if col_index is None:
-            return False
-
+        col_index = get_or_create_today_column(sheet)
         col = col_index + 1
+
+        data = sheet.get_all_values()
         target = normalize(f"{first} {last}")
 
         for i, row in enumerate(data[1:], start=2):
@@ -171,19 +163,20 @@ def write_sheet(first, last):
                 sheet.update_cell(i, col, "P")
                 return True
 
-        # add new student
-        new_row = [f"{first} {last}"] + [""] * (len(header) - 1)
+        # ADD NEW USER
+        header_len = len(data[0])
+        new_row = [f"{first} {last}"] + [""] * (header_len - 1)
         new_row[col - 1] = "P"
-        sheet.append_row(new_row)
 
+        sheet.append_row(new_row)
         return True
 
     except Exception as e:
-        logger.error(f"Write error: {e}")
+        logger.error(e)
         return False
 
 # -------------------------------
-# CORE LOGIC
+# CORE
 # -------------------------------
 def process(rfid):
     conn = get_db()
@@ -206,9 +199,7 @@ def process(rfid):
                 "last_name": last
             }
 
-        success = write_sheet(first, last)
-
-        if not success:
+        if not write_sheet(first, last):
             return {
                 "status": "sheet_error",
                 "first_name": first,
@@ -225,7 +216,7 @@ def process(rfid):
         }
 
     except Exception as e:
-        logger.error(f"Process error: {e}")
+        logger.error(e)
         return {"status": "error"}
 
     finally:
@@ -257,7 +248,4 @@ def register(data: StudentCreate):
 def health():
     return {"status": "ok"}
 
-# -------------------------------
-# FRONTEND SERVE
-# -------------------------------
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

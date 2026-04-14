@@ -83,8 +83,9 @@ try:
              "https://www.googleapis.com/auth/drive"]
         )
         client = gspread.authorize(creds)
+        logger.info("✅ Google Sheets Connected")
 except Exception as e:
-    logger.error(e)
+    logger.error(f"❌ Google Sheets Error: {e}")
 
 # -------------------------------
 # MODELS
@@ -107,7 +108,6 @@ def get_sheet():
 def normalize(name):
     return re.sub(r"\s+", " ", name.strip().lower())
 
-# 🔥 NEW: EXACT TODAY COLUMN ONLY
 def get_today_column(header):
     today_str = datetime.now().strftime("%d-%b")
 
@@ -121,77 +121,115 @@ def get_today_column(header):
 # CHECK
 # -------------------------------
 def already_checked(first, last):
-    sheet = get_sheet()
-    data = sheet.get_all_values()
+    try:
+        sheet = get_sheet()
+        data = sheet.get_all_values()
 
-    header = data[0]
-    col = get_today_column(header)
+        if not data:
+            return False
 
-    if col is None:
-        logger.error("❌ TODAY COLUMN NOT FOUND")
+        header = data[0]
+        col = get_today_column(header)
+
+        if col is None:
+            return False
+
+        target = normalize(f"{first} {last}")
+
+        for row in data[1:]:
+            if normalize(row[0]) == target:
+                return len(row) > col and row[col] == "P"
+
         return False
 
-    target = normalize(f"{first} {last}")
-
-    for row in data[1:]:
-        if normalize(row[0]) == target:
-            return len(row) > col and row[col] == "P"
-
-    return False
+    except Exception as e:
+        logger.error(f"Check error: {e}")
+        return False
 
 # -------------------------------
 # WRITE
 # -------------------------------
 def write_sheet(first, last):
-    sheet = get_sheet()
-    data = sheet.get_all_values()
+    try:
+        sheet = get_sheet()
+        data = sheet.get_all_values()
 
-    header = data[0]
-    col_index = get_today_column(header)
+        if not data:
+            return False
 
-    if col_index is None:
-        logger.error("❌ TODAY COLUMN NOT FOUND")
+        header = data[0]
+        col_index = get_today_column(header)
+
+        if col_index is None:
+            return False
+
+        col = col_index + 1
+        target = normalize(f"{first} {last}")
+
+        for i, row in enumerate(data[1:], start=2):
+            if normalize(row[0]) == target:
+                sheet.update_cell(i, col, "P")
+                return True
+
+        # add new student
+        new_row = [f"{first} {last}"] + [""] * (len(header) - 1)
+        new_row[col - 1] = "P"
+        sheet.append_row(new_row)
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Write error: {e}")
         return False
 
-    col = col_index + 1
-    target = normalize(f"{first} {last}")
-
-    for i, row in enumerate(data[1:], start=2):
-        if normalize(row[0]) == target:
-            sheet.update_cell(i, col, "P")
-            return True
-
-    # add new student
-    new_row = [f"{first} {last}"] + [""] * (len(header) - 1)
-    new_row[col - 1] = "P"
-    sheet.append_row(new_row)
-
-    return True
-
 # -------------------------------
-# CORE
+# CORE LOGIC
 # -------------------------------
 def process(rfid):
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    cur.execute("SELECT * FROM students WHERE rfid_uid=%s", (rfid,))
-    student = cur.fetchone()
+    try:
+        cur.execute("SELECT * FROM students WHERE rfid_uid=%s", (rfid,))
+        student = cur.fetchone()
 
-    if not student:
-        return {"status": "not_found"}
+        if not student:
+            return {"status": "not_found"}
 
-    if already_checked(student["first_name"], student["last_name"]):
-        return {"status": "already_checked"}
+        first = student["first_name"]
+        last = student["last_name"]
 
-    if not write_sheet(student["first_name"], student["last_name"]):
-        return {"status": "sheet_error"}
+        if already_checked(first, last):
+            return {
+                "status": "already_checked",
+                "first_name": first,
+                "last_name": last
+            }
 
-    cur.execute("INSERT INTO attendance (rfid_uid) VALUES (%s)", (rfid,))
-    conn.commit()
-    conn.close()
+        success = write_sheet(first, last)
 
-    return {"status": "success"}
+        if not success:
+            return {
+                "status": "sheet_error",
+                "first_name": first,
+                "last_name": last
+            }
+
+        cur.execute("INSERT INTO attendance (rfid_uid) VALUES (%s)", (rfid,))
+        conn.commit()
+
+        return {
+            "status": "success",
+            "first_name": first,
+            "last_name": last
+        }
+
+    except Exception as e:
+        logger.error(f"Process error: {e}")
+        return {"status": "error"}
+
+    finally:
+        conn.close()
 
 # -------------------------------
 # ROUTES
@@ -219,4 +257,7 @@ def register(data: StudentCreate):
 def health():
     return {"status": "ok"}
 
+# -------------------------------
+# FRONTEND SERVE
+# -------------------------------
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

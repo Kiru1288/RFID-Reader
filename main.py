@@ -17,13 +17,8 @@ app = FastAPI()
 # -------------------------------
 # LOGGING
 # -------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-logger = logging.getLogger("rfid_attendance")
-logger.info("🔥🔥🔥 SERVER STARTED 🔥🔥🔥")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("rfid")
 
 # -------------------------------
 # CONFIG
@@ -71,10 +66,7 @@ def init_db():
     """)
 
     conn.commit()
-    cur.close()
     conn.close()
-
-    logger.info("✅ DB READY")
 
 init_db()
 
@@ -82,22 +74,17 @@ init_db()
 # GOOGLE SHEETS
 # -------------------------------
 client = None
-
 try:
     creds_json = os.getenv("GOOGLE_CREDENTIALS")
-
     if creds_json:
-        creds_dict = json.loads(creds_json)
-        scope = [
-            "https://spreadsheets.google.com/feeds",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            json.loads(creds_json),
+            ["https://spreadsheets.google.com/feeds",
+             "https://www.googleapis.com/auth/drive"]
+        )
         client = gspread.authorize(creds)
-        logger.info("✅ GOOGLE SHEETS CONNECTED")
-
 except Exception as e:
-    logger.error(f"❌ GOOGLE ERROR: {str(e)}")
+    logger.error(e)
 
 # -------------------------------
 # MODELS
@@ -114,185 +101,104 @@ class ScanRequest(BaseModel):
 # -------------------------------
 # HELPERS
 # -------------------------------
-def valid_rfid(rfid: str):
-    return bool(re.fullmatch(r"\d{6,30}", rfid.strip()))
-
 def get_sheet():
-    if not client:
-        return None
     return client.open_by_key(SHEET_ID).get_worksheet(0)
 
-def normalize_name(name):
+def normalize(name):
     return re.sub(r"\s+", " ", name.strip().lower())
 
-# 🔥 FIXED: SKIP COLUMN A
-def get_best_date_column(header):
-    today = datetime.now()
-    parsed = []
+# 🔥 NEW: EXACT TODAY COLUMN ONLY
+def get_today_column(header):
+    today_str = datetime.now().strftime("%d-%b")
 
-    # START FROM COLUMN 1 (skip names column)
-    for i in range(1, len(header)):
-        col = header[i]
+    for i in range(1, len(header)):  # skip column A
+        if header[i].strip() == today_str:
+            return i
 
-        try:
-            d = datetime.strptime(col.strip(), "%d-%b")
-            d = d.replace(year=today.year)
-            parsed.append((i, d))
-        except:
-            continue
-
-    if not parsed:
-        return None
-
-    parsed.sort(key=lambda x: x[1], reverse=True)
-
-    for idx, d in parsed:
-        if d <= today:
-            return idx
-
-    return parsed[0][0]
+    return None
 
 # -------------------------------
-# CHECK ALREADY PRESENT
+# CHECK
 # -------------------------------
-def check_already_in_sheet(first_name, last_name):
-    try:
-        sheet = get_sheet()
-        data = sheet.get_all_values()
+def already_checked(first, last):
+    sheet = get_sheet()
+    data = sheet.get_all_values()
 
-        if not data:
-            return False
+    header = data[0]
+    col = get_today_column(header)
 
-        header = data[0]
-        col = get_best_date_column(header)
-
-        if col is None:
-            logger.error("❌ NO VALID DATE COLUMNS")
-            return False
-
-        target = normalize_name(f"{first_name} {last_name}")
-
-        for row in data[1:]:
-            if not row:
-                continue
-
-            if normalize_name(row[0]) == target:
-                return len(row) > col and row[col] == "P"
-
+    if col is None:
+        logger.error("❌ TODAY COLUMN NOT FOUND")
         return False
 
-    except Exception as e:
-        logger.error(f"❌ CHECK ERROR: {str(e)}")
+    target = normalize(f"{first} {last}")
+
+    for row in data[1:]:
+        if normalize(row[0]) == target:
+            return len(row) > col and row[col] == "P"
+
+    return False
+
+# -------------------------------
+# WRITE
+# -------------------------------
+def write_sheet(first, last):
+    sheet = get_sheet()
+    data = sheet.get_all_values()
+
+    header = data[0]
+    col_index = get_today_column(header)
+
+    if col_index is None:
+        logger.error("❌ TODAY COLUMN NOT FOUND")
         return False
 
-# -------------------------------
-# WRITE TO SHEET
-# -------------------------------
-def write_to_sheet(first_name, last_name):
-    try:
-        sheet = get_sheet()
-        data = sheet.get_all_values()
+    col = col_index + 1
+    target = normalize(f"{first} {last}")
 
-        if not data:
-            logger.error("❌ EMPTY SHEET")
-            return False
+    for i, row in enumerate(data[1:], start=2):
+        if normalize(row[0]) == target:
+            sheet.update_cell(i, col, "P")
+            return True
 
-        header = data[0]
-        col_index = get_best_date_column(header)
+    # add new student
+    new_row = [f"{first} {last}"] + [""] * (len(header) - 1)
+    new_row[col - 1] = "P"
+    sheet.append_row(new_row)
 
-        if col_index is None:
-            logger.error("❌ NO DATE COLUMN FOUND")
-            return False
-
-        col = col_index + 1
-        target = normalize_name(f"{first_name} {last_name}")
-
-        logger.info(f"📅 USING COLUMN: {header[col_index]} (INDEX {col})")
-        logger.info(f"🔍 LOOKING FOR: {target}")
-
-        for i, row in enumerate(data[1:], start=2):
-            if not row:
-                continue
-
-            if normalize_name(row[0]) == target:
-                sheet.update_cell(i, col, "P")
-                logger.info(f"✅ UPDATED row={i}, col={col}")
-                return True
-
-        # AUTO ADD
-        logger.warning("⚠️ NAME NOT FOUND → ADDING")
-
-        new_row = [f"{first_name} {last_name}"]
-        for _ in range(len(header) - 1):
-            new_row.append("")
-
-        new_row[col - 1] = "P"
-
-        sheet.append_row(new_row)
-        logger.info("✅ NEW ROW ADDED")
-
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ SHEET ERROR: {str(e)}")
-        return False
+    return True
 
 # -------------------------------
-# CORE LOGIC
+# CORE
 # -------------------------------
-def process_check_in(rfid_uid: str):
-    logger.info(f"📡 SCAN: {rfid_uid}")
-
-    if not valid_rfid(rfid_uid):
-        return {"status": "invalid"}
-
+def process(rfid):
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    try:
-        cur.execute("SELECT * FROM students WHERE rfid_uid=%s", (rfid_uid,))
-        student = cur.fetchone()
+    cur.execute("SELECT * FROM students WHERE rfid_uid=%s", (rfid,))
+    student = cur.fetchone()
 
-        if not student:
-            logger.error("❌ STUDENT NOT FOUND")
-            return {"status": "not_found"}
+    if not student:
+        return {"status": "not_found"}
 
-        already = check_already_in_sheet(student["first_name"], student["last_name"])
+    if already_checked(student["first_name"], student["last_name"]):
+        return {"status": "already_checked"}
 
-        if already:
-            return {"status": "already_checked"}
+    if not write_sheet(student["first_name"], student["last_name"]):
+        return {"status": "sheet_error"}
 
-        success = write_to_sheet(student["first_name"], student["last_name"])
+    cur.execute("INSERT INTO attendance (rfid_uid) VALUES (%s)", (rfid,))
+    conn.commit()
+    conn.close()
 
-        if not success:
-            return {"status": "sheet_failed"}
-
-        cur.execute("""
-        INSERT INTO attendance (rfid_uid, timestamp)
-        VALUES (%s, %s)
-        """, (rfid_uid, datetime.now()))
-
-        conn.commit()
-
-        return {
-            "status": "success",
-            "first_name": student["first_name"],
-            "last_name": student["last_name"]
-        }
-
-    except Exception as e:
-        logger.error(f"❌ ERROR: {str(e)}")
-        return {"status": "error"}
-
-    finally:
-        conn.close()
+    return {"status": "success"}
 
 # -------------------------------
 # ROUTES
 # -------------------------------
 @app.post("/scan")
 def scan(data: ScanRequest):
-    return process_check_in(data.rfid_uid)
+    return process(data.rfid_uid)
 
 @app.post("/register")
 def register(data: StudentCreate):
@@ -313,7 +219,4 @@ def register(data: StudentCreate):
 def health():
     return {"status": "ok"}
 
-# -------------------------------
-# FRONTEND
-# -------------------------------
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

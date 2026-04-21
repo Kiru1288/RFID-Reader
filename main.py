@@ -18,7 +18,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rfid")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# 🔥 PRIMARY SHEET (YOUR MAIN ATTENDANCE)
 SHEET_ID = "1-l4fz97lprWxAUcyNr3-pgsLGDIoEJS2TrNWHj7Cj-Q"
+
+# 🔥 SECOND TEST SHEET (NEW ONE YOU SENT)
+SECOND_SHEET_ID = "11F39-21p5FTjbRSB4ghGM6GO-n8RQnSp_55507B0MAM"
 
 # -------------------------------
 # CORS
@@ -73,8 +78,10 @@ try:
     if creds_json:
         creds = ServiceAccountCredentials.from_json_keyfile_dict(
             json.loads(creds_json),
-            ["https://spreadsheets.google.com/feeds",
-             "https://www.googleapis.com/auth/drive"]
+            [
+                "https://spreadsheets.google.com/feeds",
+                "https://www.googleapis.com/auth/drive"
+            ]
         )
         client = gspread.authorize(creds)
         logger.info("✅ Google Sheets Connected")
@@ -96,13 +103,18 @@ class ScanRequest(BaseModel):
 # -------------------------------
 # HELPERS
 # -------------------------------
-def get_sheet():
-    return client.open_by_key(SHEET_ID).get_worksheet(0)
-
 def normalize(name):
     return re.sub(r"\s+", " ", name.strip().lower())
 
-# 🔥 AUTO CREATE DATE COLUMN
+def get_main_sheet():
+    return client.open_by_key(SHEET_ID).get_worksheet(0)
+
+def get_second_sheet():
+    return client.open_by_key(SECOND_SHEET_ID).get_worksheet(0)
+
+# -------------------------------
+# MAIN SHEET LOGIC (UNCHANGED)
+# -------------------------------
 def get_or_create_today_column(sheet):
     data = sheet.get_all_values()
 
@@ -112,12 +124,10 @@ def get_or_create_today_column(sheet):
     header = data[0]
     today_str = datetime.now().strftime("%d-%b")
 
-    # CHECK IF EXISTS
     for i in range(1, len(header)):
         if header[i].strip() == today_str:
             return i
 
-    # CREATE NEW COLUMN
     new_col_index = len(header) + 1
     sheet.update_cell(1, new_col_index, today_str)
 
@@ -125,12 +135,9 @@ def get_or_create_today_column(sheet):
 
     return new_col_index - 1
 
-# -------------------------------
-# CHECK
-# -------------------------------
 def already_checked(first, last):
     try:
-        sheet = get_sheet()
+        sheet = get_main_sheet()
         col = get_or_create_today_column(sheet)
 
         data = sheet.get_all_values()
@@ -146,12 +153,9 @@ def already_checked(first, last):
         logger.error(e)
         return False
 
-# -------------------------------
-# WRITE
-# -------------------------------
-def write_sheet(first, last):
+def write_main_sheet(first, last):
     try:
-        sheet = get_sheet()
+        sheet = get_main_sheet()
         col_index = get_or_create_today_column(sheet)
         col = col_index + 1
 
@@ -163,7 +167,6 @@ def write_sheet(first, last):
                 sheet.update_cell(i, col, "P")
                 return True
 
-        # ADD NEW USER
         header_len = len(data[0])
         new_row = [f"{first} {last}"] + [""] * (header_len - 1)
         new_row[col - 1] = "P"
@@ -173,6 +176,26 @@ def write_sheet(first, last):
 
     except Exception as e:
         logger.error(e)
+        return False
+
+# -------------------------------
+# 🔥 SECOND SHEET WRITE (NEW)
+# -------------------------------
+def write_second_sheet(first, last):
+    try:
+        sheet = get_second_sheet()
+
+        name = f"{first} {last}"
+        date = datetime.now().strftime("%Y-%m-%d")
+
+        # ALWAYS APPEND (NO DUP CHECK)
+        sheet.append_row([name, date])
+
+        logger.info(f"🧪 SECOND SHEET LOGGED: {name} | {date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ SECOND SHEET ERROR: {e}")
         return False
 
 # -------------------------------
@@ -199,13 +222,14 @@ def process(rfid):
                 "last_name": last
             }
 
-        if not write_sheet(first, last):
-            return {
-                "status": "sheet_error",
-                "first_name": first,
-                "last_name": last
-            }
+        # MAIN SHEET
+        if not write_main_sheet(first, last):
+            return {"status": "sheet_error"}
 
+        # 🔥 SECOND SHEET (ALWAYS WRITE)
+        write_second_sheet(first, last)
+
+        # DATABASE LOG
         cur.execute("INSERT INTO attendance (rfid_uid) VALUES (%s)", (rfid,))
         conn.commit()
 
